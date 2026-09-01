@@ -7,16 +7,18 @@
 create or replace function presence_heartbeat(session_id text)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_sess text := coalesce(presence_heartbeat.session_id, '');
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if (_active_ban(uid)).id is not null then raise exception 'CHC:banned:You are banned.'; end if;
   if _kicked(uid) then raise exception 'CHC:kicked:You were removed from the chat.'; end if;
   insert into presence (user_id, state, session_id, last_seen)
-  values (uid, 'online', coalesce(session_id,''), now())
+  values (uid, 'online', v_sess, now())
   on conflict (user_id) do update set
     state = 'online',
-    session_id = coalesce(session_id, presence.session_id),
+    session_id = coalesce(presence_heartbeat.session_id, presence.session_id),
     kicked = false, kicked_reason = null,
     last_seen = now();
   -- sweep stale presence in the same heartbeat (cheap, no cron needed)
@@ -285,15 +287,18 @@ $$;
 create or replace function report_submit(target_user_id uuid default null, message_id uuid default null, category_input text default 'other', reason_input text default '')
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_target uuid := target_user_id;
+  v_msg uuid := message_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if not _rate_check(uid, 'report', 3600, 10) then
     raise exception 'CHC:rate_limit:Too many reports. Try later.'; end if;
-  if target_user_id is null and message_id is null then
+  if v_target is null and v_msg is null then
     raise exception 'CHC:empty:Nothing to report.'; end if;
   insert into reports (reporter_id, target_user_id, message_id, category, reason)
-  values (uid, target_user_id, message_id, category_input, left(coalesce(reason_input,''), 1000));
+  values (uid, v_target, v_msg, category_input, left(coalesce(reason_input,''), 1000));
   return jsonb_build_object('ok', true);
 end;
 $$;

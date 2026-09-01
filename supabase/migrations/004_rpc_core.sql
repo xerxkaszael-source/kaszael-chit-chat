@@ -260,38 +260,43 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
+  v_room uuid := room_id;
+  v_content text := content;
+  v_reply uuid := reply_to;
+  v_cmid text := client_msg_id;
+  v_atts uuid[] := attachment_ids;
   msg record;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if (_active_ban(uid)).id is not null then raise exception 'CHC:banned:You are banned.'; end if;
   if (_active_mute(uid)).id is not null then raise exception 'CHC:muted:You are muted.'; end if;
   if _kicked(uid) then raise exception 'CHC:kicked:You were removed from the chat.'; end if;
-  if not exists(select 1 from chat_rooms where id = room_id) then
+  if not exists(select 1 from chat_rooms where id = v_room) then
     raise exception 'CHC:no_room:Room not found.';
   end if;
   if not _rate_check(uid, 'message', 10, 8) then
     raise exception 'CHC:rate_limit:Slow down — too many messages.';
   end if;
-  content := trim(coalesce(content, ''));
-  if content = '' and (attachment_ids is null or array_length(attachment_ids,1) is null) then
+  v_content := trim(coalesce(v_content, ''));
+  if v_content = '' and (v_atts is null or array_length(v_atts,1) is null) then
     raise exception 'CHC:empty:Message cannot be empty.';
   end if;
-  if char_length(content) > 4000 then raise exception 'CHC:too_long:Message too long.'; end if;
+  if char_length(v_content) > 4000 then raise exception 'CHC:too_long:Message too long.'; end if;
 
   insert into messages (room_id, sender_id, content, reply_to, client_msg_id)
-  values (room_id, uid, content, reply_to, client_msg_id)
+  values (v_room, uid, v_content, v_reply, v_cmid)
   returning * into msg;
 
   -- attach uploaded files to this message
-  if attachment_ids is not null then
+  if v_atts is not null then
     update message_attachments set message_id = msg.id
-      where id = any(attachment_ids) and uploader_id = uid and message_id is null;
+      where id = any(v_atts) and uploader_id = uid and message_id is null;
   end if;
 
   -- @mentions → notifications
-  perform _notify(p.id, 'mention', uid, jsonb_build_object('message_id', msg.id, 'preview', left(content, 120)))
+  perform _notify(p.id, 'mention', uid, jsonb_build_object('message_id', msg.id, 'preview', left(v_content, 120)))
   from profiles p
-  where p.username in (select distinct lower(m[1]) from regexp_matches(content, '@([a-z0-9_]{3,20})', 'g') m)
+  where p.username in (select distinct lower(m[1]) from regexp_matches(v_content, '@([a-z0-9_]{3,20})', 'g') m)
     and p.id <> uid and not p.is_guest
     and coalesce((select notify_mention from user_settings where user_id = p.id), true)
     and not exists(select 1 from blocks b where b.blocker_id = p.id and b.blocked_id = uid);
@@ -306,17 +311,19 @@ language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
   sender uuid;
+  v_msg uuid := message_id;
+  v_new text := new_content;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
-  select sender_id into sender from messages where id = message_id;
+  select sender_id into sender from messages mm where mm.id = v_msg;
   if sender is null then raise exception 'CHC:not_found:Message not found.'; end if;
   if sender <> uid then raise exception 'CHC:forbidden:You can only edit your own messages.'; end if;
   if _is_guest_row(uid) then raise exception 'CHC:guest:Guests cannot edit.'; end if;
-  new_content := trim(coalesce(new_content, ''));
-  if char_length(new_content) < 1 then raise exception 'CHC:empty:Message cannot be empty.'; end if;
-  if char_length(new_content) > 4000 then raise exception 'CHC:too_long:Message too long.'; end if;
-  update messages set content = new_content, edited_at = now() where id = message_id;
-  return (select row_to_json(m)::jsonb from messages m where m.id = message_id);
+  v_new := trim(coalesce(v_new, ''));
+  if char_length(v_new) < 1 then raise exception 'CHC:empty:Message cannot be empty.'; end if;
+  if char_length(v_new) > 4000 then raise exception 'CHC:too_long:Message too long.'; end if;
+  update messages set content = v_new, edited_at = now() where id = v_msg;
+  return (select row_to_json(m)::jsonb from messages m where m.id = v_msg);
 end;
 $$;
 
@@ -326,13 +333,14 @@ language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
   sender uuid;
+  v_msg uuid := message_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
-  select sender_id into sender from messages where id = message_id;
+  select sender_id into sender from messages mm where mm.id = v_msg;
   if sender is null then raise exception 'CHC:not_found:Message not found.'; end if;
   if sender <> uid then raise exception 'CHC:forbidden:Own messages only.'; end if;
-  update messages set moderation_state = 'deleted', content = '' where id = message_id;
-  perform _audit(uid, 'MESSAGE_DELETED', uid, message_id);
+  update messages set moderation_state = 'deleted', content = '' where id = v_msg;
+  perform _audit(uid, 'MESSAGE_DELETED', uid, v_msg);
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -342,11 +350,13 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   lim int := least(coalesce(limit_n, 40), 60);
+  v_room uuid := room_id;
+  v_before timestamptz := before_ts;
 begin
   return jsonb_build_object('messages', (
     select coalesce(jsonb_agg(row_to_json(m)::jsonb), '[]'::jsonb)
     from (select * from messages
-          where room_id = room_id and (before_ts is null or created_at < before_ts)
+          where room_id = v_room and (v_before is null or created_at < v_before)
           order by created_at desc limit lim) m));
 end;
 $$;
@@ -357,16 +367,18 @@ language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
   sender uuid;
+  v_msg uuid := message_id;
+  v_reason text := reason;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 30 then raise exception 'CHC:forbidden:Moderator or higher required.'; end if;
-  select sender_id into sender from messages where id = message_id;
+  select sender_id into sender from messages mm where mm.id = v_msg;
   if sender is null then raise exception 'CHC:not_found:Message not found.'; end if;
   update messages set moderation_state = 'recalled', content = '',
-    recalled_by = uid, recall_reason = left(coalesce(reason,''), 300), recalled_at = now()
-  where id = message_id;
-  delete from message_pins where message_id = message_id;
-  perform _audit(uid, 'MESSAGE_RECALLED', sender, message_id, coalesce(reason,''), '{}'::jsonb, 'warning');
+    recalled_by = uid, recall_reason = left(coalesce(v_reason,''), 300), recalled_at = now()
+  where id = v_msg;
+  delete from message_pins mp where mp.message_id = v_msg;
+  perform _audit(uid, 'MESSAGE_RECALLED', sender, v_msg, coalesce(v_reason,''), '{}'::jsonb, 'warning');
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -374,15 +386,18 @@ $$;
 create or replace function message_pin(message_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_msg uuid := message_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 40 then raise exception 'CHC:forbidden:Admin or owner required.'; end if;
-  if not exists(select 1 from messages where id = message_id) then
+  if not exists(select 1 from messages mm where mm.id = v_msg) then
     raise exception 'CHC:not_found:Message not found.'; end if;
-  insert into message_pins (message_id, pinned_by) values (message_id, uid)
-    on conflict (message_id) do nothing;
-  perform _audit(uid, 'MESSAGE_PINNED', null, message_id);
+  if not exists(select 1 from message_pins mp where mp.message_id = v_msg) then
+    insert into message_pins (message_id, pinned_by) values (v_msg, uid);
+  end if;
+  perform _audit(uid, 'MESSAGE_PINNED', null, v_msg);
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -390,12 +405,14 @@ $$;
 create or replace function message_unpin(message_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_msg uuid := message_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 40 then raise exception 'CHC:forbidden:Admin or owner required.'; end if;
-  delete from message_pins where message_id = message_id;
-  perform _audit(uid, 'MESSAGE_UNPINNED', null, message_id);
+  delete from message_pins mp where mp.message_id = v_msg;
+  perform _audit(uid, 'MESSAGE_UNPINNED', null, v_msg);
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -403,6 +420,7 @@ $$;
 create or replace function pins_list(room_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
+declare v_room uuid := room_id;
 begin
   return jsonb_build_object('pins', (
     select coalesce(jsonb_agg(jsonb_build_object(
@@ -410,7 +428,7 @@ begin
       'pinned_at', p.created_at,
       'pinned_by', p.pinned_by) order by p.created_at desc), '[]'::jsonb)
     from message_pins p join messages m on m.id = p.message_id
-    where m.room_id = room_id and m.moderation_state = 'visible'));
+    where m.room_id = v_room and m.moderation_state = 'visible'));
 end;
 $$;
 
@@ -419,17 +437,20 @@ $$;
 create or replace function reaction_toggle(message_id uuid, emoji text)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_msg uuid := message_id;
+  v_emoji text := emoji;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if (_active_ban(uid)).id is not null then raise exception 'CHC:banned:You are banned.'; end if;
   if not _rate_check(uid, 'reaction', 10, 20) then
     raise exception 'CHC:rate_limit:Too many reactions.'; end if;
-  if not exists(select 1 from messages where id = message_id and moderation_state = 'visible') then
+  if not exists(select 1 from messages where id = v_msg and moderation_state = 'visible') then
     raise exception 'CHC:not_found:Message not found.'; end if;
-  delete from message_reactions where message_id = message_id and user_id = uid and emoji = emoji;
+  delete from message_reactions mr where mr.message_id = v_msg and mr.user_id = uid and mr.emoji = v_emoji;
   if not found then
-    insert into message_reactions (message_id, user_id, emoji) values (message_id, uid, emoji);
+    insert into message_reactions (message_id, user_id, emoji) values (v_msg, uid, v_emoji);
   end if;
   return jsonb_build_object('ok', true);
 end;

@@ -11,6 +11,8 @@ language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
   dur int := coalesce(duration_min, 60);
+  v_target uuid := target_id;
+  v_reason text := reason;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 30 then raise exception 'CHC:forbidden:Moderator or higher required.'; end if;
@@ -22,9 +24,9 @@ begin
   if _role_level(uid) = 40 and dur > 43200 then raise exception 'CHC:limits:Admin mutes max 30 days.'; end if;
   if dur < 1 then raise exception 'CHC:limits:Duration must be at least 1 minute.'; end if;
   insert into mutes (target_id, actor_id, reason, expires_at)
-  values (target_id, uid, left(coalesce(reason,''), 500), now() + (dur || ' minutes')::interval);
-  perform _notify(target_id, 'moderation', uid, jsonb_build_object('action','muted','duration_min', dur));
-  perform _audit(uid, 'USER_MUTED', target_id, null, coalesce(reason,''), jsonb_build_object('minutes', dur), 'warning');
+  values (v_target, uid, left(coalesce(v_reason,''), 500), now() + (dur || ' minutes')::interval);
+  perform _notify(v_target, 'moderation', uid, jsonb_build_object('action','muted','duration_min', dur));
+  perform _audit(uid, 'USER_MUTED', v_target, null, coalesce(v_reason,''), jsonb_build_object('minutes', dur), 'warning');
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -32,14 +34,16 @@ $$;
 create or replace function mod_unmute(target_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_target uuid := target_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 30 then raise exception 'CHC:forbidden:Moderator or higher required.'; end if;
-  if _role_level(target_id) >= _role_level(uid) and _role_level(uid) < 50 then
+  if _role_level(v_target) >= _role_level(uid) and _role_level(uid) < 50 then
     raise exception 'CHC:hierarchy:Cannot unmute equal or higher role.'; end if;
-  update mutes set active = false where target_id = target_id and active;
-  perform _audit(uid, 'USER_UNMUTED', target_id);
+  update mutes m set active = false where m.target_id = v_target and m.active;
+  perform _audit(uid, 'USER_UNMUTED', v_target);
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -49,12 +53,14 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
-  expires timestamptz := null;
+  v_expires timestamptz := null;
+  v_target uuid := target_id;
+  v_reason text := reason;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 30 then raise exception 'CHC:forbidden:Moderator or higher required.'; end if;
-  if _is_guest_row(target_id) then raise exception 'CHC:not_found:Guests cannot be banned (purge instead).'; end if;
-  if _role_level(target_id) >= _role_level(uid) then
+  if _is_guest_row(v_target) then raise exception 'CHC:not_found:Guests cannot be banned (purge instead).'; end if;
+  if _role_level(v_target) >= _role_level(uid) then
     raise exception 'CHC:hierarchy:Cannot ban equal or higher role.'; end if;
   if duration_hours is not null then
     if duration_hours < 1 then raise exception 'CHC:limits:Duration must be at least 1 hour.'; end if;
@@ -62,16 +68,16 @@ begin
       raise exception 'CHC:limits:Moderator bans max 24h.'; end if;
     if _role_level(uid) = 40 and duration_hours > 168 then
       raise exception 'CHC:limits:Admin bans max 7 days (owner can ban permanently).'; end if;
-    expires := now() + (duration_hours || ' hours')::interval;
+    v_expires := now() + (duration_hours || ' hours')::interval;
   else
     if _role_level(uid) < 40 then raise exception 'CHC:forbidden:Permanent bans require admin or owner.'; end if;
   end if;
   insert into bans (target_id, actor_id, reason, expires_at)
-  values (target_id, uid, left(coalesce(reason,''), 500), expires);
-  update presence set kicked = true, kicked_reason = 'banned' where user_id = target_id;
-  perform _notify(target_id, 'moderation', uid, jsonb_build_object('action','banned'));
-  perform _audit(uid, 'USER_BANNED', target_id, null, coalesce(reason,''),
-    jsonb_build_object('permanent', expires is null), 'critical');
+  values (v_target, uid, left(coalesce(v_reason,''), 500), v_expires);
+  update presence pr set kicked = true, kicked_reason = 'banned' where pr.user_id = v_target;
+  perform _notify(v_target, 'moderation', uid, jsonb_build_object('action','banned'));
+  perform _audit(uid, 'USER_BANNED', v_target, null, coalesce(v_reason,''),
+    jsonb_build_object('permanent', v_expires is null), 'critical');
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -79,12 +85,14 @@ $$;
 create or replace function mod_unban(target_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare
+  uid uuid := auth.uid();
+  v_target uuid := target_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _role_level(uid) < 40 then raise exception 'CHC:forbidden:Admin or owner required.'; end if;
-  update bans set active = false where target_id = target_id and active;
-  perform _audit(uid, 'USER_UNBANNED', target_id);
+  update bans b set active = false where b.target_id = v_target and b.active;
+  perform _audit(uid, 'USER_UNBANNED', v_target);
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -98,9 +106,9 @@ begin
   if _role_level(uid) < 30 then raise exception 'CHC:forbidden:Moderator or higher required.'; end if;
   if _role_level(target_id) >= _role_level(uid) then
     raise exception 'CHC:hierarchy:Cannot kick equal or higher role.'; end if;
-  update presence set kicked = true, kicked_reason = left(coalesce(reason,''), 200) where user_id = target_id;
-  perform _notify(target_id, 'moderation', uid, jsonb_build_object('action','kicked'));
-  perform _audit(uid, 'USER_KICKED', target_id, null, coalesce(reason,''), '{}'::jsonb, 'warning');
+  update presence pr set kicked = true, kicked_reason = left(coalesce(mod_kick.reason,''), 200) where pr.user_id = mod_kick.target_id;
+  perform _notify(mod_kick.target_id, 'moderation', uid, jsonb_build_object('action','kicked'));
+  perform _audit(uid, 'USER_KICKED', mod_kick.target_id, null, coalesce(mod_kick.reason,''), '{}'::jsonb, 'warning');
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -312,6 +320,7 @@ declare
   uid uuid := auth.uid();
   fname text;
   aid uuid;
+  v_msg uuid := message_id;
 begin
   if uid is null then raise exception 'CHC:unauthorized:Not signed in.'; end if;
   if _is_guest_row(uid) then raise exception 'CHC:guest:Guests cannot upload files.'; end if;
@@ -328,7 +337,7 @@ begin
   fname := regexp_replace(coalesce(filename_input,'attachment'), '[^a-zA-Z0-9._-]', '_', 'g');
   fname := left(fname, 120);
   insert into message_attachments (message_id, uploader_id, bucket, storage_path, filename, mime, size_bytes, kind)
-  values (message_id, uid, bucket_name, storage_path, fname, mime_input, size_bytes_input, kind_input)
+  values (v_msg, uid, bucket_name, storage_path, fname, mime_input, size_bytes_input, kind_input)
   returning id into aid;
   return jsonb_build_object('id', aid);
 end;

@@ -39,13 +39,13 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- rolling rate limiter. returns true when ALLOWED.
-create or replace function _rate_check(uid uuid, action text, window_sec int, max_count int)
+create or replace function _rate_check(uid uuid, act text, window_sec int, max_count int)
 returns boolean
 language plpgsql security definer set search_path = public as $$
 declare r record;
 begin
   insert into rate_limits (user_id, action, window_start, count)
-  values (uid, action, now(), 1)
+  values (uid, act, now(), 1)
   on conflict (user_id, action) do update set
     window_start = case when rate_limits.window_start < now() - (window_sec || ' seconds')::interval
                         then now() else rate_limits.window_start end,
@@ -56,22 +56,22 @@ begin
 end;
 $$;
 
-create or replace function _audit(actor uuid, action text, target uuid default null,
-  msg uuid default null, reason text default '', meta jsonb default '{}'::jsonb,
-  severity text default 'info')
+create or replace function _audit(a_actor uuid, a_action text, a_target uuid default null,
+  a_msg uuid default null, a_reason text default '', a_meta jsonb default '{}'::jsonb,
+  a_severity text default 'info')
 returns void
 language sql volatile security definer set search_path = public as $$
   insert into audit_logs (actor_id, action, target_id, message_id, reason, meta, severity)
-  values (actor, action, target, msg, reason, meta, severity);
+  values (a_actor, a_action, a_target, a_msg, a_reason, a_meta, a_severity);
 $$;
 
-create or replace function _notify(uid uuid, kind text, actor uuid default null,
-  payload jsonb default '{}'::jsonb)
+create or replace function _notify(n_uid uuid, n_kind text, n_actor uuid default null,
+  n_payload jsonb default '{}'::jsonb)
 returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if uid is null then return; end if;
-  insert into notifications (user_id, kind, actor_id, payload) values (uid, kind, actor, payload);
+  if n_uid is null then return; end if;
+  insert into notifications (user_id, kind, actor_id, payload) values (n_uid, n_kind, n_actor, n_payload);
 end;
 $$;
 
