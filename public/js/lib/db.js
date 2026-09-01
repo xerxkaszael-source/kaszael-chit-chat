@@ -1,5 +1,5 @@
 // db.js — Supabase client + typed RPC wrappers. ALL mutations go through RPCs.
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = window.supabase;
 
 const cfg = window.SUPABASE_CONFIG;
 if (!cfg || !cfg.url || cfg.url.startsWith('__SUPABASE')) {
