@@ -14,7 +14,7 @@ die() { echo "ERROR: $1" >&2; exit 1; }
 get_env() { grep "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\n\r"'"'" ; }
 SUPABASE_URL="https://$(get_env SUPABASE_PROJECT_REF).supabase.co"
 ANON_KEY="$(get_env SUPABASE_ANON_KEY)"
-NETLIFY_TOKEN="*** NETLIFY_AUTH_TOKEN)"
+NETLIFY_TOKEN="$(get_env NETLIFY_AUTH_TOKEN)"
 [ "$ANON_KEY" = "__SUPABASE_ANON_KEY__" ] && die "anon key is still the template placeholder"
 [ ${#ANON_KEY} -lt 100 ] && die "anon key looks truncated (${#ANON_KEY} chars)"
 [ -n "$NETLIFY_TOKEN" ] || die "NETLIFY_AUTH_TOKEN missing"
@@ -29,13 +29,21 @@ sed -i "s|__SUPABASE_URL__|$SUPABASE_URL|g; s|__SUPABASE_ANON_KEY__|$ANON_KEY|g"
 
 # 4. sanity: placeholders gone, key full-length
 grep -q "__SUPABASE" "$BUILD_DIR/js/config.js" && die "placeholder still present after injection"
-KEY_LEN=$(grep -o "anonKey: '[^']*'" "$BUILD_DIR/js/config.js" | sed "s/anonKey: '//;s/'$//" | wc -c)
+KEY_LEN=$(grep -o 'anonKey: "[^"]*"' "$BUILD_DIR/js/config.js" | sed 's/anonKey: "//;s/"$//' | wc -c)
 echo "config injected (anon key length: $((KEY_LEN-1)))"
 
 # 5. zip + Netlify deploy (create site on first run)
 SITE_NAME="kaszael-chit-chat"
 cd "$BUILD_DIR"
-zip -qr ../deploy.zip .
+python3 - <<'PY'
+import zipfile, os
+zf = zipfile.ZipFile('../deploy.zip', 'w', zipfile.ZIP_DEFLATED)
+for root, dirs, files in os.walk('.'):
+    for f in files:
+        p = os.path.join(root, f)
+        zf.write(p, os.path.relpath(p, '.'))
+zf.close()
+PY
 cd "$PROJECT_DIR"
 
 SITE_ID=$(curl -sf -H "Authorization: Bearer $NETLIFY_TOKEN" "https://api.netlify.com/api/v1/sites" \
