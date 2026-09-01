@@ -1,6 +1,6 @@
 # Kaszael Chit&Chat — PROJECT.md
 
-**Status:** EXECUTING (mission MISSION-20260902-002)
+**Status:** LIVE (deployed 2026-09-02 — https://kaszael-chit-chat.netlify.app)
 **Started:** 2026-09-02
 **Stack:** Vanilla ES modules (no build step) + Supabase (Auth/Postgres/Realtime/Storage) + Netlify static deploy + GitHub source-of-truth.
 
