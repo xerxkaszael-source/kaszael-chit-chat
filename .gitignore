@@ -1,0 +1,5 @@
+build/
+deploy.zip
+node_modules/
+*.bak
+.DS_Store
