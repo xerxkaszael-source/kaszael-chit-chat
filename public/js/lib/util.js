@@ -70,11 +70,18 @@ export function throttle(fn, ms) {
 }
 
 // ---- toasts ----
+let _toastTimer = null;
 export function toast(msg, kind = 'info', ms = 3200) {
   const box = document.getElementById('toasts');
+  // single responsive toast: replace the current one instead of stacking bars
+  box.innerHTML = '';
   const t = el('div', { class: `toast ${kind === 'error' ? 'err' : kind}`, role: 'status' }, msg);
   box.append(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 320); }, ms);
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    t.style.opacity = '0'; t.style.transition = 'opacity .3s';
+    setTimeout(() => t.remove(), 320);
+  }, ms);
 }
 
 // ---- modals ----

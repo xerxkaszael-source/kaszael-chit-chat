@@ -99,46 +99,60 @@ function scheduleTypingExpiry() {
 export async function startRealtime() {
   destroyed = false;
 
-  subMessages = sb.channel('db-messages')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `room_id=eq.${GENERAL_ROOM}` }, onMessageEvent)
-    .subscribe();
-
-  subReactions = sb.channel('db-reactions')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, async () => {
-      await refreshReactionsForVisible();
-      notify('reactions');
-    }).subscribe();
-
-  subPins = sb.channel('db-pins')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_pins' }, async () => {
-      try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; notify('pins'); } catch {}
-    }).subscribe();
-
-  subBroadcasts = sb.channel('db-broadcasts')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, (payload) => {
-      notify('broadcast');
-      playBroadcastSound();
-      void payload;
-    }).subscribe();
-
-  presenceChannel = sb.channel('presence-room', { config: { presence: { key: state.profile?.id || 'anon' } } })
-    .on('presence', { event: 'sync' }, () => {
-      state.presenceFromRealtime = presenceChannel.presenceState();
-      notify('presence');
-    })
-    .subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now() }); } catch {}
-      }
-    });
-
-  typingChannel = sb.channel('typing-room')
-    .on('broadcast', { event: 'typing' }, onTypingEvent)
-    .on('broadcast', { event: 'typing_stop' }, onTypingEvent)
-    .subscribe();
-
-  await beat();
+  // Start the presence heartbeat FIRST so the "connected" state resolves even
+  // if a realtime subscription below throws (was leaving it at "connecting").
+  try { await beat(); } catch {}
   heartbeatTimer = setInterval(beat, 30000);
+
+  try {
+    subMessages = sb.channel('db-messages')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `room_id=eq.${GENERAL_ROOM}` }, onMessageEvent)
+      .subscribe();
+  } catch (e) { console.error('[chc] messages channel failed', e); }
+
+  try {
+    subReactions = sb.channel('db-reactions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, async () => {
+        await refreshReactionsForVisible();
+        notify('reactions');
+      }).subscribe();
+  } catch (e) { console.error('[chc] reactions channel failed', e); }
+
+  try {
+    subPins = sb.channel('db-pins')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_pins' }, async () => {
+        try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; notify('pins'); } catch {}
+      }).subscribe();
+  } catch (e) { console.error('[chc] pins channel failed', e); }
+
+  try {
+    subBroadcasts = sb.channel('db-broadcasts')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, (payload) => {
+        notify('broadcast');
+        playBroadcastSound();
+        void payload;
+      }).subscribe();
+  } catch (e) { console.error('[chc] broadcasts channel failed', e); }
+
+  try {
+    presenceChannel = sb.channel('presence-room', { config: { presence: { key: state.profile?.id || 'anon' } } })
+      .on('presence', { event: 'sync' }, () => {
+        state.presenceFromRealtime = presenceChannel.presenceState();
+        notify('presence');
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now() }); } catch {}
+        }
+      });
+  } catch (e) { console.error('[chc] presence channel failed', e); }
+
+  try {
+    typingChannel = sb.channel('typing-room')
+      .on('broadcast', { event: 'typing' }, onTypingEvent)
+      .on('broadcast', { event: 'typing_stop' }, onTypingEvent)
+      .subscribe();
+  } catch (e) { console.error('[chc] typing channel failed', e); }
 
   // connection lifecycle
   sb.realtime.onStateChange((s) => {

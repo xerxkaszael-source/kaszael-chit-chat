@@ -45,7 +45,14 @@ async function loadInitial() {
     scrollBottom(true);
   } catch (e) {
     console.error('[chc] initial load failed', e);
-    listEl.append(el('div', { class: 'msg-system' }, el('div', { class: 'sys-card' }, 'Could not load messages. Retrying…')));
+    if (state.messages.length === 0) {
+      // replace any existing retry card (don't stack a new one every 2.5s)
+      let card = listEl.querySelector('.load-retry');
+      if (!card) {
+        card = el('div', { class: 'msg-system load-retry' }, el('div', { class: 'sys-card' }, 'Could not load messages. Retrying…'));
+        listEl.append(card);
+      }
+    }
     setTimeout(loadInitial, 2500);
   }
 }

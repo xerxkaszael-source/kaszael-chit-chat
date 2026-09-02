@@ -448,6 +448,27 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
   .admin-shell { flex-direction: column; }
   .admin-side { width: 100%; display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-1); padding: 6px; }
   .admin-side .side-item { white-space: nowrap; padding: 8px 12px; }
+  /* room title area can shrink; hide low-priority topbar icons so they fit portrait */
+  .topbar { gap: 4px; padding: 0 6px; }
+  .topbar .room-sub { display: none; }
+  .topbar .brand-mark { width: 28px; height: 28px; }
+  .icon-btn { width: 34px; height: 34px; }
+  .conn-pill { padding: 3px 8px; }
+}
+@media (max-width: 620px) {
+  /* portrait phones: drop non-essential topbar icons, keep core actions */
+  .topbar .room-title { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conn-pill .cp-text { display: none; }           /* just the LED on tiny screens */
+  .conn-pill { padding: 3px 6px; }
+  /* hide theme + settings buttons on smallest sizes; still reachable via sidebar */
+  .topbar button[aria-label='Theme'], .topbar button[aria-label='Settings'] { display: none; }
+}
+@media (max-width: 460px) {
+  :root { --topbar-h: 48px; }
+  .topbar .brand span:last-child { display: none; } /* hide "Chit&Chat" wordmark */
+  .topbar button[aria-label='Search messages'] { display: none; }
+  .topbar .room-title { max-width: 30vw; }
+  .icon-btn { width: 32px; height: 32px; font-size: 15px; }
 }
 @media (max-width: 560px) {
   :root { --topbar-h: 48px; }

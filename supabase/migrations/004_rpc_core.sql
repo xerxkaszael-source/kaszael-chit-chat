@@ -355,9 +355,9 @@ declare
 begin
   return jsonb_build_object('messages', (
     select coalesce(jsonb_agg(row_to_json(m)::jsonb), '[]'::jsonb)
-    from (select * from messages
-          where room_id = v_room and (v_before is null or created_at < v_before)
-          order by created_at desc limit lim) m));
+    from (select m.* from messages m
+          where m.room_id = v_room and (v_before is null or m.created_at < v_before)
+          order by m.created_at desc limit lim) m));
 end;
 $$;
 
