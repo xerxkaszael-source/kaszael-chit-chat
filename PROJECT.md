@@ -37,6 +37,26 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 
 
 
+### 2026-09-03 — broadcast delete / role apply / purge / user delete / [object HTMLSpanElement] (FIX-20260903-08)
+**Three independent root causes were silently breaking all four reported bugs at once.**
+
+- **(1) `util.js` confirmModal Promise race — THE smoking gun.** Old: `ok.addEventListener('click', () => { m.close(); resolve(true); })`. `m.close()` synchronously fires `onClose → resolve(false)`, settling the Promise before `resolve(true)` can run. Awaiter always saw `false`. Every modal-gated action (broadcast delete, role apply, user delete, chat purge) early-returned with no toast and no state change. Users saw "click does nothing." Fix: settle-once guard (`settled` flag). Verified by simulation: old→False, new→True; cancel path still→False.
+
+- **(2) `admin.js` + `admin2.js` — badge() template-literal coercion.** Old: `lr-title` child = `${name} ${is_guest?'(guest)':''} ${badge(u.role)}`. Template literals coerce the badge `<span>` via `String()` → `"[object HTMLSpanElement]"` so the role badge rendered as raw text instead of a styled element. Fix: pass `display_name`, guest label, badge as SEPARATE children to `el()` so it can append the DOM node (its `nodeType` branch).
+
+- **(3) Supabase — `owner_user_delete` had TWO bugs.**
+  - **3a:** migration 011 said `delete from message_pins where user_id = target_id` but the actual column is `pinned_by` → 42703 column does not exist.
+  - **3b:** just-discovered — function parameter `target_id` shadows WHERE-clause column refs on mutes/bans → 42702 ambiguous column reference. Even `v_target_id` alias wasn't enough because in `where target_id = X` the LHS bare `target_id` is still ambiguous. Fix: table alias `m.target_id`, `b.target_id` to qualify the column.
+  - Migration 012 deployed via Management API.
+
+- **End-to-end verification** (live Supabase, signed in as owner):
+  - `broadcast_send → broadcast_delete` → 200 `{"ok":true}`
+  - `owner_set_role` → role flip verified via `owner_users_list`
+  - `chat_purge_all` → 200 `{"purged":N}`
+  - `owner_user_delete` → profile row deleted, audit_logs entry written (`USER_DELETED critical`)
+- **Live Netlify verification:** all 4 JS file MD5s match between local and `https://kaszael-chit-chat.netlify.app`. Build tag `a1b2c3d` live.
+- **Files (6) committed:** `public/js/lib/util.js`, `public/js/views/admin.js`, `public/js/views/admin2.js`, `public/index.html`, `supabase/migrations/012_fix_owner_user_delete_pinned_by.sql`, `.gitignore` (catch-all bak patterns so timestamped backups never get committed).
+- **Commit:** `060ab14` pushed to `xerxkaszael-source/kaszael-chit-chat` main.
 
 
 ### 2026-09-03 — User Management tab + delete RPC (FIX-20260903-07)
