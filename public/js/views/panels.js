@@ -180,7 +180,7 @@ export async function openProfile(userId) {
         badge(prof.role),
         el('div', { class: 'muted', style: 'font-size:.75rem' },
           pres?.state === 'online' ? 'Online now' : pres?.last_seen ? `Last seen ${relTime(pres.last_seen)}` : '',
-          ' · joined ' + new Date(prof.created_at).toLocaleDateString()));
+          ' · joined ' + new Date(prof.created_at).toLocaleDateString())));
     if (prof.bio) body.append(el('p', { style: 'font-size:.88rem;color:var(--text-2);margin-bottom:14px' }, prof.bio));
 
     if (self) {
