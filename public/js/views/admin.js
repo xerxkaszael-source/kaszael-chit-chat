@@ -52,76 +52,119 @@ function routeAdmin(view, main) {
 // ================= MODERATION =================
 async function moderationView(main) {
   main.append(el('h2', {}, 'Moderation'));
+  // Single content container — every tab swaps its content in place to prevent
+  // the "stacked duplicate headers" bug where each click appended a new holder.
+  const content = el('div', { class: 'mod-content' });
+  main.append(content);
+
+  let active = 'reports';
+  function setActive(name) {
+    active = name;
+    [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    content.innerHTML = '';
+    if (name === 'reports') reportsTab(content);
+    else if (name === 'states') statesTab(content);
+    else if (name === 'lookup') lookupTab(content);
+  }
   const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px' },
-    tabBtn('Reports', () => reportsTab(main)),
-    tabBtn('Active mutes & bans', () => statesTab(main)),
-    tabBtn('User lookup', () => lookupTab(main)));
-  main.append(tabs);
-  reportsTab(main);
+    tabBtn('Reports', 'reports', setActive),
+    tabBtn('Active mutes & bans', 'states', setActive),
+    tabBtn('User lookup', 'lookup', setActive));
+  main.insertBefore(tabs, content);
+  setActive('reports');
 }
 
-function tabBtn(label, fn) {
-  const b = el('button', { class: 'btn sm', onclick: () => fn() }, label);
-  return b;
+function tabBtn(label, name, setActive) {
+  return el('button', { class: 'btn sm', 'data-tab': name, onclick: () => setActive(name) }, label);
 }
 
-async function reportsTab(main) {
-  const holder = main.querySelector('.mod-holder') || main.append(el('div', { class: 'mod-holder' }))[0];
-  holder?.remove?.();
-  const div = el('div', { class: 'mod-holder' });
-  main.append(div);
+async function reportsTab(host) {
   try {
     const { reports } = await rpc('mod_reports_list', { status_filter: 'open' });
-    if (!reports.length) { div.append(el('p', { class: 'muted' }, 'No open reports.')); return; }
+    if (!reports.length) { host.append(el('p', { class: 'muted' }, 'No open reports.')); return; }
+    const rows = reports.map(r => el('tr', {},
+      el('td', {}, '@' + (r.reporter_username || '?')),
+      el('td', {}, r.target_username ? '@' + r.target_username : r.message_id ? 'message' : '—'),
+      el('td', {}, r.category),
+      el('td', {}, (r.reason || '').slice(0, 60)),
+      el('td', {}, relTime(r.created_at)),
+      el('td', {},
+        el('button', { class: 'btn sm', onclick: async () => { await rpc('mod_report_resolve', { report_id: r.id, new_status: 'resolved' }); toast('Resolved', 'ok'); setActive('reports'); } }, 'Resolve'),
+        el('button', { class: 'btn sm ghost', onclick: async () => { await rpc('mod_report_resolve', { report_id: r.id, new_status: 'dismissed' }); setActive('reports'); } }, 'Dismiss'))));
     const table = el('div', { class: 'table-wrap' }, el('table', { class: 'data-table' },
       el('thead', {}, el('tr', {},
         el('th', {}, 'Reporter'), el('th', {}, 'Target'), el('th', {}, 'Category'), el('th', {}, 'Reason'), el('th', {}, 'Age'), el('th', {}, 'Actions'))),
-      el('tbody', {}, reports.map(r => el('tr', {},
-        el('td', {}, '@' + (r.reporter_username || '?')),
-        el('td', {}, r.target_username ? '@' + r.target_username : r.message_id ? 'message' : '—'),
-        el('td', {}, r.category),
-        el('td', {}, (r.reason || '').slice(0, 60)),
-        el('td', {}, relTime(r.created_at)),
-        el('td', {},
-          el('button', { class: 'btn sm', onclick: async () => { await rpc('mod_report_resolve', { report_id: r.id, new_status: 'resolved' }); reportsTab(main); toast('Resolved', 'ok'); } }, 'Resolve'),
-          el('button', { class: 'btn sm ghost', onclick: async () => { await rpc('mod_report_resolve', { report_id: r.id, new_status: 'dismissed' }); reportsTab(main); } }, 'Dismiss')))))));
-    div.append(table);
-  } catch (e) { div.append(el('p', { class: 'muted' }, e.chc?.text || 'Failed to load reports.')); }
+      el('tbody', {}, rows)));
+    host.append(table);
+  } catch (e) { host.append(el('p', { class: 'muted' }, e.chc?.text || 'Failed to load reports.')); }
 }
 
-async function statesTab(main) {
-  const div = el('div', { class: 'mod-holder' });
-  main.append(div);
+async function statesTab(host) {
   try {
     const { mutes, bans } = await rpc('mod_moderation_state_list');
-    div.append(el('h3', { style: 'margin:10px 0' }, 'Active mutes'));
-    div.append(mutes.length ? el('div', { class: 'table-wrap' }, el('table', { class: 'data-table' },
-      el('tbody', {}, mutes.map(m => el('tr', {},
-        el('td', {}, '@' + m.username),
-        el('td', {}, m.expires_at ? 'until ' + new Date(m.expires_at).toLocaleString() : 'permanent'),
-        el('td', {}, m.reason || ''),
-        el('td', {}, el('button', { class: 'btn sm', onclick: async () => { await rpc('mod_unmute', { target_id: m.target_id }); statesTab(main); } }, 'Unmute'))))))) : el('p', { class: 'muted' }, 'None.'));
-    div.append(el('h3', { style: 'margin:10px 0' }, 'Active bans'));
-    div.append(bans.length ? el('div', { class: 'table-wrap' }, el('table', { class: 'data-table' },
-      el('tbody', {}, bans.map(b => el('tr', {},
-        el('td', {}, '@' + b.username),
-        el('td', {}, b.expires_at ? 'until ' + new Date(b.expires_at).toLocaleString() : 'permanent'),
-        el('td', {}, b.reason || ''),
-        el('td', {}, canAdmin() ? el('button', { class: 'btn sm', onclick: async () => { await rpc('mod_unban', { target_id: b.target_id }); statesTab(main); } }, 'Unban') : null)))))) : el('p', { class: 'muted' }, 'None.'));
-  } catch (e) { div.append(el('p', { class: 'muted' }, e.chc?.text || 'Failed.')); }
+    host.append(el('h3', { style: 'margin:10px 0' }, 'Active mutes'));
+    if (mutes.length) {
+      host.append(el('div', { class: 'table-wrap' }, el('table', { class: 'data-table' },
+        el('tbody', {}, mutes.map(m => {
+          const row = el('tr', {},
+            el('td', {}, '@' + m.username),
+            el('td', {}, m.expires_at ? 'until ' + new Date(m.expires_at).toLocaleString() : 'permanent'),
+            el('td', {}, m.reason || ''),
+            el('td', {}, el('button', { class: 'btn sm', onclick: async (ev) => {
+              ev.target.disabled = true;
+              // optimistic UI: hide the row immediately
+              row.style.opacity = '0.4';
+              try {
+                await rpc('mod_unmute', { target_id: m.target_id });
+                toast('Unmuted', 'ok');
+                setActive('states');
+              } catch (e) {
+                row.style.opacity = '';
+                ev.target.disabled = false;
+                toast(e.chc?.text || e.message || 'Unmute failed', 'error');
+              }
+            } }, 'Unmute')));
+          return row;
+        })))));
+    } else { host.append(el('p', { class: 'muted' }, 'None.')); }
+    host.append(el('h3', { style: 'margin:10px 0' }, 'Active bans'));
+    if (bans.length) {
+      host.append(el('div', { class: 'table-wrap' }, el('table', { class: 'data-table' },
+        el('tbody', {}, bans.map(b => {
+          const row = el('tr', {},
+            el('td', {}, '@' + b.username),
+            el('td', {}, b.expires_at ? 'until ' + new Date(b.expires_at).toLocaleString() : 'permanent'),
+            el('td', {}, b.reason || ''),
+            el('td', {}, canAdmin() ? el('button', { class: 'btn sm', onclick: async (ev) => {
+              ev.target.disabled = true;
+              row.style.opacity = '0.4';
+              try {
+                await rpc('mod_unban', { target_id: b.target_id });
+                toast('Unbanned', 'ok');
+                setActive('states');
+              } catch (e) {
+                row.style.opacity = '';
+                ev.target.disabled = false;
+                toast(e.chc?.text || e.message || 'Unban failed', 'error');
+              }
+            } }, 'Unban') : null));
+          return row;
+        })))));
+    } else { host.append(el('p', { class: 'muted' }, 'None.')); }
+  } catch (e) { host.append(el('p', { class: 'muted' }, e.chc?.text || 'Failed.')); }
 }
 
-async function lookupTab(main) {
+async function lookupTab(host) {
   const input = el('input', { placeholder: 'Search username…', style: 'width:260px;padding:9px 12px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:10px;color:var(--text-1)' });
   const results = el('div', { style: 'margin-top:10px' });
-  main.append(el('div', { class: 'mod-holder' }, el('h3', {}, 'User lookup'), input, results));
+  host.append(el('h3', {}, 'User lookup'), input, results);
   input.addEventListener('input', async () => {
     const q = input.value.trim();
     if (q.length < 2) { results.innerHTML = ''; return; }
     try {
       const { users } = await rpc('owner_users_list', { q }).catch(async () => ({ users: [] }));
       results.innerHTML = '';
-      for (const u of (users || []).slice(0, 10)) results.append(userActionsRow(u, () => { lookupTab(main); }));
+      for (const u of (users || []).slice(0, 10)) results.append(userActionsRow(u, () => { /* lookup is live, no full refresh needed */ }));
     } catch {}
   });
 }
@@ -187,19 +230,25 @@ async function doUnban(u, refresh) {
 // ================= BROADCAST =================
 function broadcastView(main) {
   if (!canAdmin()) { main.append(el('p', { class: 'muted' }, 'Forbidden.')); return; }
-  main.append(el('h2', {}, 'Broadcast'));
+  main.append(el('h2', {}, ic('bell'), ' Broadcast'));
   const kind = el('select', {}, ['info', 'announcement', 'warning', 'maintenance', 'system'].map(k => el('option', { value: k }, k)));
   const title = el('input', { maxlength: 120, placeholder: 'Title' });
   const bodyIn = el('textarea', { rows: 5, maxlength: 2000, placeholder: 'Message to everyone…' });
   const send = el('button', { class: 'btn primary', onclick: async () => {
     if (!title.value.trim() || !bodyIn.value.trim()) { toast('Title and body required.', 'error'); return; }
     if (!await confirmModal({ title: 'Send broadcast?', text: `Everyone will see: "${title.value.trim()}"`, confirmLabel: 'Send' })) return;
+    send.disabled = true;
     try {
-      await rpc('broadcast_send', { kind_input: kind.value, title_input: title.value, body_input: bodyIn.value });
-      toast('Broadcast sent', 'ok'); title.value = ''; bodyIn.value = '';
-      history();
-    } catch (e) { toast(e.chc?.text || 'Send failed', 'error'); }
-  } }, ic('megaphone'), 'Send broadcast');
+      await rpc('broadcast_send', { kind_input: kind.value, title_input: title.value.trim(), body_input: bodyIn.value.trim() });
+      toast('Broadcast sent', 'ok');
+      title.value = ''; bodyIn.value = '';
+      await history();
+    } catch (e) {
+      toast(e.chc?.text || e.message || 'Send failed', 'error');
+    } finally {
+      send.disabled = false;
+    }
+  } }, ic('paper-plane-top'), ' Send broadcast');
   const histEl = el('div', { style: 'margin-top:18px' });
   main.append(
     el('div', { class: 'field' }, el('label', {}, 'Type'), kind),
@@ -207,22 +256,41 @@ function broadcastView(main) {
     el('div', { class: 'field' }, el('label', {}, 'Body'), bodyIn),
     send, histEl);
   async function history() {
+    histEl.innerHTML = '';
+    histEl.append(el('h3', { style: 'margin:10px 0' }, 'History'), el('p', { class: 'muted' }, 'Loading…'));
     try {
-      const { broadcasts } = await rpc('broadcasts_list', { limit_n: 20 });
+      const res = await rpc('broadcasts_list', { limit_n: 20 });
+      const broadcasts = res?.broadcasts || res || [];
       histEl.innerHTML = '';
-      histEl.append(el('h3', { style: 'margin:10px 0' }, 'History'));
-      for (const b of broadcasts || []) {
-        histEl.append(el('div', { class: `broadcast-card kind-${b.kind}` },
-          el('div', { class: 'bc-head' }, ic('megaphone'), el('span', {}, b.kind)),
-          el('div', { class: 'bc-title' }, b.title),
-          el('div', { class: 'bc-body' }, b.body),
-          el('div', { class: 'bc-meta' }, `${b.author_display_name} · ${new Date(b.created_at).toLocaleString()}`),
-          isOwner() ? el('button', { class: 'btn sm danger', style: 'margin-top:8px', onclick: async () => {
-            if (!await confirmModal({ title: 'Delete broadcast?', text: b.title, danger: true, confirmLabel: 'Delete' })) return;
-            await rpc('broadcast_delete', { broadcast_id: b.id }); history();
-          } }, 'Delete') : null));
+      if (!broadcasts.length) { histEl.append(el('p', { class: 'muted' }, 'No broadcasts yet.')); return; }
+      for (const b of broadcasts) {
+        histEl.append(broadcastCard(b, history));
       }
-    } catch {}
+    } catch (e) {
+      histEl.innerHTML = '';
+      histEl.append(el('p', { class: 'muted' }, e.chc?.text || e.message || 'Failed to load history.'));
+    }
   }
   history();
+}
+
+function broadcastCard(b, refresh) {
+  const card = el('div', { class: `broadcast-card kind-${b.kind}` },
+    el('div', { class: 'bc-head' }, ic('bell'), el('span', {}, b.kind)),
+    el('div', { class: 'bc-title' }, b.title || '(untitled)'),
+    el('div', { class: 'bc-body' }, b.body || ''),
+    el('div', { class: 'bc-meta' }, `${b.author_display_name || 'system'} · ${new Date(b.created_at).toLocaleString()}`),
+    isOwner() ? el('button', { class: 'btn sm danger', style: 'margin-top:8px', onclick: async (ev) => {
+      ev.target.disabled = true;
+      try {
+        if (!await confirmModal({ title: 'Delete broadcast?', text: b.title || '(untitled)', danger: true, confirmLabel: 'Delete' })) { ev.target.disabled = false; return; }
+        await rpc('broadcast_delete', { broadcast_id: b.id });
+        toast('Broadcast deleted', 'ok');
+        await refresh();
+      } catch (e) {
+        toast(e.chc?.text || e.message || 'Delete failed', 'error');
+        ev.target.disabled = false;
+      }
+    } }, ic('trash'), ' Delete') : null);
+  return card;
 }
