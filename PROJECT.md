@@ -38,6 +38,13 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 
 
 
+
+### 2026-09-03 — User Management tab + delete RPC (FIX-20260903-07)
+- **NEW Owner Center tab**: 'User management' — searchable list of all users, each row has a Delete button gated by isMe + isStaff checks. Confirms via 'DELETE USER' phrase modal.
+- **NEW RPC owner_user_delete(target_id uuid)**: owner-only; deletes all user data across 14 tables (notifications, settings, rate_limits, blocks, friendships, reactions, attachments, pins, reports, mutes, bans, audit_logs, presence, profile) + calls `auth.admin.delete_user()`. Refuses self + other-owner.
+- **FK constraints**: audit_logs.actor_id and audit_logs.target_id changed to ON DELETE SET NULL (keep audit history).
+- **Migration 011 deployed** via Management API.
+
 ### 2026-09-03 — message_list ambiguous fix (FIX-20260903-06)
 - **Real root cause of "Could not load messages. Retrying…"**: migration 008 (which I wrote earlier this session) introduced a PL/pgSQL ambiguity — the function parameter `room_id` and the `messages.room_id` column both had the same name, so Postgres returned `42702: column reference "room_id" is ambiguous` on EVERY call. The frontend's `loadInitial()` retried every 2.5s forever.
 - **Migration 010**: rewrote `message_list()` using table alias `m` + local variable `v_room` pattern (matching the original migration 004 style). Now returns messages correctly for both initial load and pagination (`before_ts`).
