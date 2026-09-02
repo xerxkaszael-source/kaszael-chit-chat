@@ -104,6 +104,12 @@ export function modal({ title, body, foot, wide = false, onClose }) {
 
 export function confirmModal({ title, text, confirmLabel = 'Confirm', danger = false, requirePhrase = null }) {
   return new Promise(resolve => {
+    // Settle-once guard. Without this, m.close() (called by OK handler) synchronously
+    // fires onClose which calls resolve(false) — and then resolve(true) becomes a no-op
+    // because the Promise is already settled. The fix: track whether we've already
+    // resolved; ignore subsequent onClose / resolve calls.
+    let settled = false;
+    const settle = (val) => { if (settled) return; settled = true; resolve(val); };
     const body = el('div', {},
       el('p', { style: 'margin-bottom:12px' }, text),
       requirePhrase ? el('div', { class: 'field' },
@@ -113,12 +119,12 @@ export function confirmModal({ title, text, confirmLabel = 'Confirm', danger = f
     const m = modal({
       title, body,
       foot: [el('button', { class: 'btn ghost' }, 'Cancel'), ok],
-      onClose: () => resolve(false)
+      onClose: () => settle(false)
     });
     if (requirePhrase) {
       $('#cfm-phrase', m.node).addEventListener('input', e => { ok.disabled = e.target.value.trim() !== requirePhrase; });
     }
-    ok.addEventListener('click', () => { m.close(); resolve(true); });
+    ok.addEventListener('click', () => { settle(true); m.close(); });
     m.node.querySelectorAll('.modal-foot .btn')[0].addEventListener('click', () => m.close());
   });
 }

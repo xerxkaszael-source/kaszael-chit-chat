@@ -2,4 +2,9 @@ build/
 deploy.zip
 node_modules/
 *.bak
+*.*.bak
+*.*.*.bak
+*.bak.*
+*.*.bak.*
+*.*.*.bak.*
 .DS_Store

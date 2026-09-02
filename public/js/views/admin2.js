@@ -207,7 +207,10 @@ function userMgmtRow(u, refresh) {
   const row = el('div', { class: 'list-row', style: 'border-bottom:1px solid var(--line-1)' },
     avatar({ display_name: u.display_name, avatar_color: '#6c8cff' }, { size: 'sm' }),
     el('div', { class: 'lr-main' },
-      el('div', { class: 'lr-title' }, `${u.display_name} ${u.is_guest ? '(guest)' : ''} ${badge(u.role)}`),
+      // Pass display_name (string), guest label (string), badge (DOM node) as SEPARATE
+      // children — never via template literal. Template literals coerce badge(u.role)
+      // (an HTMLSpanElement) to "[object HTMLSpanElement]" because of String(s).
+      el('div', { class: 'lr-title' }, u.display_name, u.is_guest ? '(guest)' : '', badge(u.role)),
       el('div', { class: 'lr-sub' },
         `@${u.username} · joined ${new Date(u.created_at).toLocaleDateString()} · ${u.banned ? 'BANNED' : u.muted ? 'MUTED' : u.presence_state === 'online' ? 'online' : 'offline'}`)),
     el('div', { class: 'lr-actions' },
