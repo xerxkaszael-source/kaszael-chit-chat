@@ -35,7 +35,7 @@ function onMessageEvent(payload) {
       const mentioned = mine && n.content?.toLowerCase().includes('@' + mine);
       mentioned ? playMentionSound() : playMessageSound();
       if (document.hidden && mine) {
-        try { new Notification?.(`New message — ${profileOf(n.sender_id)?.display_name || 'Someone'}`, { body: n.content?.slice(0, 100) }); } catch {}
+        try { if (typeof Notification !== 'undefined') new Notification(`New message — ${profileOf(n.sender_id)?.display_name || 'Someone'}`, { body: n.content?.slice(0, 100) }); } catch {}
       }
     }
   } else if (eventType === 'UPDATE') {
