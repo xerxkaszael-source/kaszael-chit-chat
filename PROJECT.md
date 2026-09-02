@@ -36,6 +36,11 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 ## Bug fixes log
 
 
+
+### 2026-09-03 — Security + chat retry (FIX-20260903-05)
+- **Staff protection**: server-side RPCs (`friend_request`, `friend_block`, `report_submit`) now reject any target with `role IN ('owner','admin')`. Migration 009 deployed via Supabase Management API. UI also hides Block + Report buttons on staff profiles (defense in depth — 'Add friend' stays visible but will toast error).
+- **Stuck retry card**: 'Could not load messages. Retrying…' card now cleared on successful `loadInitial()`. Previously it persisted forever if first attempt failed and later attempt succeeded.
+
 ### 2026-09-03 — Batch fixes round 3 (FIX-20260903-04)
 - **Broadcast bubble single-X**: removed duplicate stray `closeIconSvg()` in `.bb-head` (was rendering 2 X icons per bubble — one real close button and one orphan SVG). Now only `bb-close` button has the X.
 - **Archive input layout**: rewrote `Archive messages older than X days` from `<div class="field">` (cramped stack) to flex row with proper label/input/unit spacing. Added **Restore all archived** button.
