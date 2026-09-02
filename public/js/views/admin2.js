@@ -41,18 +41,20 @@ export async function ownerView(main) {
       card('Broadcasts', s.broadcasts_total), card('Audit events', s.audit_total));
   } catch (e) { stats.append(el('p', { class: 'muted' }, e.chc?.text || 'Stats failed.')); }
 
-  // tabs (role mgmt + chat mgmt)
+  // tabs (role mgmt + chat mgmt + user mgmt)
   const content = el('div', { class: 'owner-content' });
   main.append(content);
   const tabs = el('div', { style: 'display:flex;gap:8px;margin:14px 0' },
     sectionTab('Role management', 'roles', setActive),
-    sectionTab('Chat management', 'chat', setActive));
+    sectionTab('Chat management', 'chat', setActive),
+    sectionTab('User management', 'users', setActive));
   main.insertBefore(tabs, content);
   function setActive(name) {
     [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     content.innerHTML = '';
     if (name === 'roles') loadRoleMgmt(content);
     else if (name === 'chat') loadChatMgmt(content);
+    else if (name === 'users') loadUserMgmt(content);
   }
   setActive('roles');
 }
@@ -156,6 +158,80 @@ function loadChatMgmt(holder) {
     } catch (e) { toast(e.chc?.text || e.message || 'Restore failed', 'error'); }
     ev.target.disabled = false;
   } }, ic('rotate-left'), ' Restore all archived'));
+}
+
+function loadUserMgmt(holder) {
+  holder.append(el('h3', { style: 'margin:0 0 8px' }, 'User management'));
+  holder.append(el('p', { class: 'muted', style: 'margin-bottom:12px' },
+    'Search users and permanently delete accounts. Owner only.'));
+
+  const search = el('input', { placeholder: 'Search by username…', style: 'width:280px;padding:9px 12px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:10px;color:var(--text-1);margin-bottom:12px' });
+  const list = el('div', {});
+  holder.append(search, list);
+
+  const render = (users) => {
+    list.innerHTML = '';
+    if (!users.length) {
+      list.append(el('p', { class: 'muted' }, 'No users found.'));
+      return;
+    }
+    for (const u of users) {
+      list.append(userMgmtRow(u, () => load(search.value.trim())));
+    }
+  };
+
+  const load = async (q = '') => {
+    list.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const { users } = await rpc('owner_users_list', { q });
+      render(users || []);
+    } catch (e) {
+      list.innerHTML = '';
+      list.append(el('p', { class: 'muted' }, e.chc?.text || e.message || 'Failed to load.'));
+    }
+  };
+
+  search.addEventListener('input', () => {
+    clearTimeout(search._t);
+    search._t = setTimeout(() => load(search.value.trim()), 300);
+  });
+  load('');
+}
+
+function userMgmtRow(u, refresh) {
+  const isMe = u.id === me().id;
+  const isStaff = u.role === 'owner';
+  // Show delete button even for owner/staff — server rejects, user sees real error
+  // This gives clear feedback (toast) instead of silent fail
+  const canDelete = !isMe && !isStaff;
+  const row = el('div', { class: 'list-row', style: 'border-bottom:1px solid var(--line-1)' },
+    avatar({ display_name: u.display_name, avatar_color: '#6c8cff' }, { size: 'sm' }),
+    el('div', { class: 'lr-main' },
+      el('div', { class: 'lr-title' }, `${u.display_name} ${u.is_guest ? '(guest)' : ''} ${badge(u.role)}`),
+      el('div', { class: 'lr-sub' },
+        `@${u.username} · joined ${new Date(u.created_at).toLocaleDateString()} · ${u.banned ? 'BANNED' : u.muted ? 'MUTED' : u.presence_state === 'online' ? 'online' : 'offline'}`)),
+    el('div', { class: 'lr-actions' },
+      el('button', { class: `btn sm ${canDelete ? 'danger' : 'ghost'}`, disabled: !canDelete || null, onclick: async (ev) => {
+        if (isMe) return toast('You cannot delete yourself.', 'error');
+        if (isStaff) return toast('Owner cannot be deleted.', 'error');
+        ev.target.disabled = true;
+        if (!await confirmModal({
+          title: `Delete user @${u.username}?`,
+          text: `Permanently remove @${u.username} (${u.display_name}). Their profile, friendships, blocks, notifications, mutes/bans, and presence will be erased. Messages they sent will be marked deleted (content preserved as '[deleted]'). This cannot be undone.`,
+          danger: true,
+          confirmLabel: 'DELETE USER',
+          requirePhrase: 'DELETE USER'
+        })) { ev.target.disabled = false; return; }
+        try {
+          await rpc('owner_user_delete', { target_id: u.id });
+          toast(`User @${u.username} deleted`, 'ok');
+          refresh?.();
+        } catch (e) {
+          toast(e.chc?.text || e.message || 'Delete failed', 'error');
+          ev.target.disabled = false;
+        }
+      } }, ic('trash'), ' Delete')));
+  return row;
 }
 
 function loadRoleUsers(holder) {
