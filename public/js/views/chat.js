@@ -41,6 +41,9 @@ async function loadInitial() {
     await refreshReactionsForVisible();
     try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; } catch {}
     await showRecentBroadcasts();
+    // Bug fix: clear any retry card from a previous failed load — otherwise it
+    // lingers on screen forever even after messages loaded.
+    listEl.querySelectorAll('.load-retry').forEach(c => c.remove());
     redraw();
     scrollBottom(true);
   } catch (e) {

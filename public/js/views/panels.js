@@ -186,16 +186,19 @@ export async function openProfile(userId) {
     if (self) {
       body.append(editProfileForm(prof, rp));
     } else if (isMemberPlus() && !prof.is_guest) {
+      // Hide user-action buttons when viewing staff (owner/admin).
+      // Server-side already rejects (migration 009), but UI shouldn't even show them.
+      const isStaff = prof.role === 'owner' || prof.role === 'admin';
       body.append(el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
         el('button', { class: 'btn sm primary', onclick: async () => {
           try { await rpc('friend_request', { target_username: prof.username }); toast('Friend request sent', 'ok'); }
           catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
         } }, ic('user-add'), 'Add friend'),
-        el('button', { class: 'btn sm ghost', onclick: async () => {
+        isStaff ? null : el('button', { class: 'btn sm ghost', onclick: async () => {
           try { await rpc('friend_block', { other_id: prof.id }); toast('Blocked', 'ok'); rp.close(); }
           catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
         } }, ic('ban'), 'Block'),
-        el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report')));
+        isStaff ? null : el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report')));
     }
   } catch (e) { body.append(el('p', { class: 'muted' }, 'Failed to load profile.')); }
 }
