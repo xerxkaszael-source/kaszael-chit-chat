@@ -302,7 +302,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .composer .reply-bar button { color: var(--text-3); font-size: 14px; }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
 .composer-input-wrap {
-  flex: 1; display: flex; align-items: flex-end; gap: 4px;
+  flex: 1; display: flex; align-items: center; gap: 4px;
   background: var(--bg-2); border: 1px solid var(--line-1);
   border-radius: var(--radius-l); padding: 6px 8px;
   transition: border-color var(--fast);
@@ -311,7 +311,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .composer-input {
   flex: 1; background: none; border: 0; outline: 0; resize: none;
   color: var(--text-1); max-height: 140px; min-height: 24px; padding: 3px 4px;
-  line-height: 1.4;
+  line-height: 1.4; text-align: center;
 }
 .composer-input::placeholder { color: var(--text-3); }
 .composer .send-btn {
