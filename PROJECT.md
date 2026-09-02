@@ -35,6 +35,14 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 
 ## Bug fixes log
 
+
+### 2026-09-03 — Batch fixes round 3 (FIX-20260903-04)
+- **Broadcast bubble single-X**: removed duplicate stray `closeIconSvg()` in `.bb-head` (was rendering 2 X icons per bubble — one real close button and one orphan SVG). Now only `bb-close` button has the X.
+- **Archive input layout**: rewrote `Archive messages older than X days` from `<div class="field">` (cramped stack) to flex row with proper label/input/unit spacing. Added **Restore all archived** button.
+- **Realtime broadcast sound timing**: moved `playBroadcastSound()` inside the same `.then()` so sound + bubble appear together (was: sound first, bubble async via dynamic import — caused race).
+- **Chat Management RPCs deployed**: `supabase/migrations/008_chat_management.sql` adds 4 owner-only RPCs (`chat_purge_older_than`, `chat_purge_all`, `chat_archive_older_than`, `chat_archive_restore_all`) + `archived_at` column on messages + updated `message_list()` to exclude archived. Deployed via Supabase Management API (`POST /database/query`).
+- **Broadcast delete verified**: RPC `broadcast_delete(broadcast_id uuid)` exists and is wired correctly. Earlier "not work" was actually the 2-X bubble bug confusing the user about delete confirmation.
+
 ### 2026-09-03 — Batch fixes round 2 (FIX-20260903-03)
 - **Mod tab stacking**: Reports/States/Lookup tabs no longer duplicate content. Single content holder + `setActive()` swap.
 - **Unban/Unmute instant feedback**: optimistic UI (row fades 0.4 instantly), button disabled during RPC, toast on success/failure.
