@@ -23,7 +23,6 @@ export function showBroadcastBubble(bc, { ttl = 10000 } = {}) {
     role: 'status'
   },
     el('div', { class: 'bb-head' },
-      closeIconSvg(),
       el('span', { class: 'bb-kicker' }, bc.kind === 'system' ? 'System' : (bc.kind || 'Announcement')),
       el('button', { class: 'bb-close', 'aria-label': 'Dismiss', onclick: () => dismiss(bubble) }, closeIconSvg())),
     el('div', { class: 'bb-title' }, bc.title || bc.body || 'Announcement'),

@@ -129,8 +129,11 @@ function loadChatMgmt(holder) {
   archCard.append(el('p', { class: 'muted', style: 'margin-bottom:10px' },
     'Soft-archive: hide messages older than the threshold from the live chat without deleting them. Owner can restore later.'));
   const archAge = el('input', { type: 'number', min: 1, value: 30, style: 'width:90px;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:8px;color:var(--text-1)' });
-  archCard.append(el('div', { class: 'field' },
-    el('label', {}, 'Archive messages older than'), archAge, el('span', {}, 'days')));
+  const archAgeRow = el('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px' },
+    el('label', { style: 'font-size:.85rem;color:var(--text-2);white-space:nowrap' }, 'Archive messages older than'),
+    archAge,
+    el('span', { style: 'color:var(--text-2);font-size:.85rem' }, 'days'));
+  archCard.append(archAgeRow);
   archCard.append(el('button', { class: 'btn sm primary', onclick: async (ev) => {
     ev.target.disabled = true;
     if (!await confirmModal({ title: `Archive messages older than ${archAge.value} days?`, text: 'Older messages will be hidden from the live chat. You can restore them later.', confirmLabel: 'Archive' })) { ev.target.disabled = false; return; }
@@ -141,6 +144,18 @@ function loadChatMgmt(holder) {
     } catch (e) { toast(e.chc?.text || e.message || 'Archive failed', 'error'); }
     ev.target.disabled = false;
   } }, ic('box-archive'), ' Archive'));
+
+  // restore (owner convenience)
+  archCard.append(el('button', { class: 'btn sm ghost', style: 'margin-left:8px', onclick: async (ev) => {
+    ev.target.disabled = true;
+    if (!await confirmModal({ title: 'Restore all archived messages?', text: 'Un-archives every message currently in the archive. They will reappear in the live chat.', confirmLabel: 'Restore' })) { ev.target.disabled = false; return; }
+    try {
+      const r = await rpc('chat_archive_restore_all', {});
+      toast(`Restored ${r.restored || 0} messages`, 'ok');
+      loadChatMgmt(holder);
+    } catch (e) { toast(e.chc?.text || e.message || 'Restore failed', 'error'); }
+    ev.target.disabled = false;
+  } }, ic('rotate-left'), ' Restore all archived'));
 }
 
 function loadRoleUsers(holder) {

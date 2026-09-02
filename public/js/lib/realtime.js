@@ -130,9 +130,12 @@ export async function startRealtime() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, (payload) => {
         const bc = payload?.new;
         if (bc && bc.id) {
-          import('./broadcast.js').then(({ showBroadcastBubble }) => showBroadcastBubble(bc));
+          // Static import (top-level would create a cycle; use direct module ref)
+          import('./broadcast.js').then(({ showBroadcastBubble }) => {
+            showBroadcastBubble(bc);
+            playBroadcastSound();
+          }).catch((e) => console.error('[chc] broadcast bubble failed', e));
         }
-        playBroadcastSound();
       }).subscribe();
   } catch (e) { console.error('[chc] broadcasts channel failed', e); }
 
