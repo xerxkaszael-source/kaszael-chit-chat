@@ -37,6 +37,12 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 
 
 
+
+### 2026-09-03 — message_list ambiguous fix (FIX-20260903-06)
+- **Real root cause of "Could not load messages. Retrying…"**: migration 008 (which I wrote earlier this session) introduced a PL/pgSQL ambiguity — the function parameter `room_id` and the `messages.room_id` column both had the same name, so Postgres returned `42702: column reference "room_id" is ambiguous` on EVERY call. The frontend's `loadInitial()` retried every 2.5s forever.
+- **Migration 010**: rewrote `message_list()` using table alias `m` + local variable `v_room` pattern (matching the original migration 004 style). Now returns messages correctly for both initial load and pagination (`before_ts`).
+- **Verified**: HTTP 200 + 5 messages via anon key. Both branches (initial + pagination) work.
+
 ### 2026-09-03 — Security + chat retry (FIX-20260903-05)
 - **Staff protection**: server-side RPCs (`friend_request`, `friend_block`, `report_submit`) now reject any target with `role IN ('owner','admin')`. Migration 009 deployed via Supabase Management API. UI also hides Block + Report buttons on staff profiles (defense in depth — 'Add friend' stays visible but will toast error).
 - **Stuck retry card**: 'Could not load messages. Retrying…' card now cleared on successful `loadInitial()`. Previously it persisted forever if first attempt failed and later attempt succeeded.
