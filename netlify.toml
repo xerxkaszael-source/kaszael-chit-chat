@@ -1,0 +1,3 @@
+# Netlify build config for Git-linked deploys.
+[build]
+  publish = "public"
