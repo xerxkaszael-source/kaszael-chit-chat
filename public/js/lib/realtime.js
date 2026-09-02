@@ -128,9 +128,11 @@ export async function startRealtime() {
   try {
     subBroadcasts = sb.channel('db-broadcasts')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, (payload) => {
-        notify('broadcast');
+        const bc = payload?.new;
+        if (bc && bc.id) {
+          import('./broadcast.js').then(({ showBroadcastBubble }) => showBroadcastBubble(bc));
+        }
         playBroadcastSound();
-        void payload;
       }).subscribe();
   } catch (e) { console.error('[chc] broadcasts channel failed', e); }
 

@@ -230,6 +230,35 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .broadcast-card.kind-maintenance { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .broadcast-card.kind-maintenance .bc-head { color: var(--danger); }
 
+/* ---------- floating broadcast bubbles ---------- */
+.broadcast-stack {
+  position: fixed; top: calc(var(--topbar-h) + 12px); right: 12px; z-index: 150;
+  display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 24px));
+  pointer-events: none;
+}
+.broadcast-bubble {
+  pointer-events: auto;
+  border: 1px solid var(--accent, #6c8cff); border-radius: var(--radius-l);
+  background: var(--bg-1); box-shadow: var(--shadow-2);
+  padding: 11px 14px;
+  animation: bcin var(--med);
+}
+.broadcast-bubble.leaving { opacity: 0; transform: translateX(12px); transition: opacity .28s, transform .28s; }
+@keyframes bcin { from { transform: translateX(16px); opacity: 0; } }
+.broadcast-bubble .bb-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.broadcast-bubble .bb-kicker { flex: 1; font-weight: 800; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.broadcast-bubble .bb-close { width: 26px; height: 26px; border-radius: var(--radius-s); display: grid; place-items: center; color: var(--text-3); }
+.broadcast-bubble .bb-close:hover { background: var(--bg-2); color: var(--text-1); }
+.broadcast-bubble .bb-close svg { display: block; }
+.broadcast-bubble .bb-title { font-weight: 700; font-size: .92rem; }
+.broadcast-bubble .bb-body { font-size: .85rem; color: var(--text-2); margin-top: 3px; white-space: pre-wrap; }
+.broadcast-bubble .bb-meta { font-size: .68rem; color: var(--text-3); margin-top: 5px; }
+.broadcast-bubble.kind-warning { border-color: var(--warning); }
+.broadcast-bubble.kind-warning .bb-kicker { color: var(--warning); }
+.broadcast-bubble.kind-maintenance, .broadcast-bubble.kind-system { border-color: var(--danger); }
+.broadcast-bubble.kind-maintenance .bb-kicker, .broadcast-bubble.kind-system .bb-kicker { color: var(--danger); }
+.broadcast-bubble.kind-info .bb-kicker { color: var(--success); }
+
 /* ---------- avatars ---------- */
 .avatar {
   width: 36px; height: 36px; border-radius: 50%; flex: 0 0 auto;

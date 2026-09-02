@@ -40,7 +40,7 @@ async function loadInitial() {
     }
     await refreshReactionsForVisible();
     try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; } catch {}
-    await loadBroadcastsIntoTimeline();
+    await showRecentBroadcasts();
     redraw();
     scrollBottom(true);
   } catch (e) {
@@ -57,10 +57,16 @@ async function loadInitial() {
   }
 }
 
-async function loadBroadcastsIntoTimeline() {
+// show recent broadcasts as floating banners (not inline timeline cards).
+// These are announcements, not chat messages — they auto-dismiss per banner.
+async function showRecentBroadcasts() {
   try {
-    const { broadcasts } = await rpc('broadcasts_list', { limit_n: 10 });
+    const { broadcasts } = await rpc('broadcasts_list', { limit_n: 3 });
     state.broadcasts = broadcasts || [];
+    if (broadcasts?.length) {
+      const { showBroadcastBubble } = await import('../lib/broadcast.js');
+      for (const b of broadcasts.slice(0, 3)) showBroadcastBubble(b);
+    }
   } catch { state.broadcasts = []; }
 }
 
@@ -68,34 +74,11 @@ async function loadBroadcastsIntoTimeline() {
 function redraw() {
   listEl.innerHTML = '';
   let lastDay = '';
-  const merged = timelineItems();
-  for (const item of merged) {
-    if (item.kind === 'msg') {
-      const day = fmtDay(item.msg.created_at);
-      if (day !== lastDay) { listEl.append(el('div', { class: 'day-divider' }, day)); lastDay = day; }
-      listEl.append(renderMessageRow(item.msg));
-    } else if (item.kind === 'broadcast') {
-      listEl.append(renderBroadcast(item.bc));
-    }
+  for (const item of state.messages) {
+    const day = fmtDay(item.created_at);
+    if (day !== lastDay) { listEl.append(el('div', { class: 'day-divider' }, day)); lastDay = day; }
+    listEl.append(renderMessageRow(item));
   }
-}
-
-// interleave broadcasts with messages by created_at
-function timelineItems() {
-  const items = [
-    ...state.messages.map(m => ({ kind: 'msg', msg: m, at: m.created_at })),
-    ...(state.broadcasts || []).map(b => ({ kind: 'broadcast', bc: b, at: b.created_at })),
-  ];
-  items.sort((a, b) => a.at.localeCompare(b.at));
-  return items;
-}
-
-function renderBroadcast(bc) {
-  return el('div', { class: `broadcast-card kind-${bc.kind}` },
-    el('div', { class: 'bc-head' }, ic('megaphone'), el('span', {}, `System · ${bc.kind}`)),
-    el('div', { class: 'bc-title' }, bc.title),
-    el('div', { class: 'bc-body' }, bc.body),
-    el('div', { class: 'bc-meta' }, `by ${bc.author_display_name || bc.author_username || 'staff'} · ${new Date(bc.created_at).toLocaleString()}`));
 }
 
 // ---------- pagination ----------
@@ -143,8 +126,6 @@ function onChatState(topic) {
     redraw();
   } else if (topic === 'typing') {
     drawTyping();
-  } else if (topic === 'broadcast') {
-    loadBroadcastsIntoTimeline().then(() => { redraw(); scrollBottom(); });
   }
 }
 

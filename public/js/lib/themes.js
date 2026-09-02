@@ -50,26 +50,26 @@ function nearestTheme(base) {
 }
 
 export function applyTheme(themeId = getStoredTheme(), mode = getStoredMode()) {
-  let theme = THEMES.find(t => t[0] === themeId) || THEMES[0];
-  // resolve effective mode: system follows OS; explicit light/dark switches to nearest theme of that base
-  let effMode = mode === 'system' ? (systemDark() ? 'dark' : 'light') : mode;
-  if (theme[2] !== effMode) {
-    const swap = nearestTheme(effMode);
-    theme = THEMES.find(t => t[0] === swap) || theme;
-  }
-  document.documentElement.setAttribute('data-chc-theme', theme[0]);
-  document.documentElement.setAttribute('data-theme', theme[2]);
+  // Explicit selection always WINS: clicking a theme applies exactly that theme.
+  const want = THEMES.find(t => t[0] === themeId);
+  let theme = want || THEMES[0];
+  // If the theme comes from a forced light/dark mode (not an explicit "system"
+  // follow), keep it as-is — no silent swapping that ignores the user's click.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = theme[2] === 'dark' ? '#0b0e14' : '#f4f5f8';
+  document.documentElement.setAttribute('data-chc-theme', theme[0]);
+  document.documentElement.setAttribute('data-theme', theme[2]);
 }
 
 export function setTheme(themeId) {
   localStorage.setItem(LS_THEME, themeId);
-  applyTheme(themeId, getStoredMode());
+  // apply the chosen theme verbatim regardless of mode base
+  applyTheme(themeId, 'system');
 }
 
 export function setMode(mode) {
   localStorage.setItem(LS_MODE, mode);
+  // "Follow system" resolves the OS base; explicit light/dark just persists.
   applyTheme(getStoredTheme(), mode);
 }
 
