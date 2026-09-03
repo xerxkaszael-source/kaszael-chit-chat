@@ -175,7 +175,7 @@ function drawShell() {
         }),
         icBtn('video-camera', 'Video call', () => {
           location.hash = '/call/video/' + currentOtherId;
-        })),
+        }))),
     el('div', { class: 'dm-body', id: 'dm-body' },
       el('div', { class: 'skeleton-row' }, 'Loading messages…')),
     el('div', { class: 'dm-composer', id: 'dm-composer' }));
