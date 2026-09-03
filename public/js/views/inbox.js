@@ -65,15 +65,25 @@ function inboxRow(c) {
   const muted = c.muted;
   const archived = c.archived;
   const lastAt = c.last_message_at ? relTime(c.last_message_at) : '';
+  // Other member data may be missing if they left/were deleted; migration 023
+  // now returns user info even for left members, but we still defend.
+  const otherId = c.other_user_id || null;
+  const otherName = c.other_display_name || c.other_username || (otherId ? '(unknown)' : '(deleted)');
+  const otherLeft = !!c.other_left;
+  // Visual hint when the other side has left — chat is read-only on their end.
+  // dm_send already enforces this server-side (returns 'not_member'/'invalid_conversation').
+  const leftTag = otherLeft ? el('span', { class: 'inbox-left-tag', title: 'This person left the chat' }, '(left)') : null;
 
   const row = el('button', {
-    class: `inbox-row${unread > 0 ? ' unread' : ''}${muted ? ' muted' : ''}${archived ? ' archived' : ''}`,
-    onclick: () => openDm(c.conversation_id, c.other_user_id)
+    class: `inbox-row${unread > 0 ? ' unread' : ''}${muted ? ' muted' : ''}${archived ? ' archived' : ''}${otherLeft ? ' left' : ''}`,
+    // Disable click if we have no other_user_id at all (member row was hard-deleted)
+    onclick: otherId ? () => openDm(c.conversation_id, otherId) : null
   },
-    avatar({ id: c.other_user_id, username: c.other_username, display_name: c.other_display_name, avatar_color: c.other_avatar_color }, { size: 'md', showPresence: true }),
+    avatar({ id: otherId, username: c.other_username, display_name: c.other_display_name, avatar_color: c.other_avatar_color }, { size: 'md', showPresence: !otherLeft }),
     el('div', { class: 'inbox-meta' },
       el('div', { class: 'inbox-line1' },
-        el('span', { class: 'inbox-name' }, c.other_display_name || c.other_username || 'Unknown'),
+        el('span', { class: 'inbox-name' }, otherName),
+        leftTag,
         el('span', { class: 'inbox-time' }, lastAt)),
       el('div', { class: 'inbox-line2' },
         el('span', { class: 'inbox-preview' }, preview),

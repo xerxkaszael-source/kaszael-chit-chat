@@ -63,7 +63,7 @@ async function refreshFriends(body) {
     if (!data.pending_in.length && !data.accepted.length && !data.pending_out.length) {
       body.append(el('p', { class: 'muted' }, 'No friends yet. Add someone by username above.'));
     }
-  } catch (e) { body.innerHTML = ''; body.append(el('p', { class: 'muted' }, e.chc?.text || 'Failed to load friends.')); }
+  } catch (e) { body.innerHTML = ''; body.append(el('p', { class: 'muted' }, e.chc?.text || 'Could not load friends. Please retry.')); }
 }
 
 function listRow(profile, sub, actions = [], onClick = null) {
@@ -162,101 +162,110 @@ export function openSearch() {
 }
 
 // ---------- PROFILE (self or other) ----------
+
+// Helper: render the full profile body (header + bio + action row) into a container.
+// Used both for the initial render AND for re-rendering after friend/DM actions.
+// Exported so other views can re-render the same profile consistently.
+function renderProfileBody(container, prof, pres, userId, rp) {
+  container.innerHTML = '';
+  if (!prof?.id) {
+    container.append(el('p', { class: 'muted' }, 'User not found.'));
+    return;
+  }
+  container.append(
+    el('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:14px' },
+      avatar(prof, { size: 'lg', showPresence: true }),
+      el('div', { style: 'font-size:1.15rem;font-weight:800' }, prof.display_name),
+      el('div', { class: 'muted' }, '@' + prof.username),
+      badge(prof.role),
+      el('div', { class: 'muted', style: 'font-size:.75rem' },
+        pres?.state === 'online' ? 'Online now' : pres?.last_seen ? `Last seen ${relTime(pres.last_seen)}` : '',
+        ' · joined ' + new Date(prof.created_at).toLocaleDateString())));
+  if (prof.bio) container.append(el('p', { style: 'font-size:.88rem;color:var(--text-2);margin-bottom:14px' }, prof.bio));
+
+  const self = userId === me().id;
+  if (self) {
+    container.append(editProfileForm(prof, rp));
+  } else if (isMemberPlus() && !prof.is_guest) {
+    const isStaff = prof.role === 'owner' || prof.role === 'admin';
+    const fs = prof.friend_status || 'none';
+    const fId = prof.friendship_id;
+    const actionRow = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
+
+    // Rebuild helper: refetch user_public and re-render the body in place.
+    // This used to reference an undefined renderProfileBody (causing every
+    // Add-friend/Accept/Cancel/Unfriend to show "Failed" toast). Now correct.
+    const rebuild = async () => {
+      try {
+        const fresh = await rpc('user_public', { target_id: userId });
+        if (fresh?.id) {
+          state.profiles.set(userId, fresh);
+          const pres2 = state.presence.get(userId);
+          renderProfileBody(container, fresh, pres2, userId, rp);
+        }
+      } catch (e) {
+        // Silent on rebuild failure — the action that triggered it already showed
+        // its own toast. Re-throwing here would spam the console.
+        console.warn('[chc] profile rebuild failed', e);
+      }
+    };
+
+    if (fs === 'none') {
+      actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
+        try { await rpc('friend_request', { target_username: prof.username }); toast('Friend request sent', 'ok'); await rebuild(); }
+        catch (e) { toast(e.chc?.text || 'Request failed', 'error'); }
+      } }, ic('user-add'), 'Add friend'));
+    } else if (fs === 'pending_out') {
+      actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+        if (!fId) return;
+        try { await rpc('friend_remove', { other_id: prof.id }); toast('Friend request cancelled', 'ok'); await rebuild(); }
+        catch (e) { toast(e.chc?.text || 'Cancel failed', 'error'); }
+      } }, ic('cross'), 'Cancel request'));
+    } else if (fs === 'pending_in') {
+      actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
+        if (!fId) return;
+        try { await rpc('friend_respond', { friendship_id: fId, accept: true }); toast('Friend request accepted', 'ok'); await rebuild(); }
+        catch (e) { toast(e.chc?.text || 'Accept failed', 'error'); }
+      } }, ic('check'), 'Accept'));
+      actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+        if (!fId) return;
+        try { await rpc('friend_respond', { friendship_id: fId, accept: false }); toast('Friend request declined', 'ok'); await rebuild(); }
+        catch (e) { toast(e.chc?.text || 'Decline failed', 'error'); }
+      } }, ic('cross'), 'Decline'));
+    } else if (fs === 'accepted') {
+      actionRow.append(el('button', { class: 'btn sm primary', onclick: () => {
+        rp.close();
+        location.hash = '/dm/' + prof.id;
+      } }, ic('envelope'), 'Message'));
+      actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+        if (!await confirmModal({ title: 'Unfriend ' + prof.display_name + '?', text: 'They will be removed from your friends list. You can send a new request later.', confirmLabel: 'Unfriend', danger: true })) return;
+        try { await rpc('friend_remove', { other_id: prof.id }); toast('Unfriended', 'ok'); await rebuild(); }
+        catch (e) { toast(e.chc?.text || 'Unfriend failed', 'error'); }
+      } }, ic('user-times'), 'Unfriend'));
+    }
+    // blocked_by_me / blocks_me → no friend actions
+
+    if (!isStaff) {
+      actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+        try { await rpc('friend_block', { other_id: prof.id }); toast('Blocked', 'ok'); rp.close(); }
+        catch (e) { toast(e.chc?.text || 'Block failed', 'error'); }
+      } }, ic('ban'), 'Block'));
+      actionRow.append(el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report'));
+    }
+    container.append(actionRow);
+  }
+}
+
 export async function openProfile(userId) {
   const self = userId === me().id;
-  let prof = state.profiles.get(userId);
   const body = el('div', {});
   const rp = rightPanel(self ? 'My profile' : 'Profile', body);
   try {
-    prof = (await rpc('user_public', { target_id: userId }));
+    const prof = await rpc('user_public', { target_id: userId });
     if (!prof?.id) { body.append(el('p', { class: 'muted' }, 'User not found.')); return; }
     state.profiles.set(userId, prof);
     const pres = state.presence.get(userId);
-    body.append(
-      el('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:14px' },
-        avatar(prof, { size: 'lg', showPresence: true }),
-        el('div', { style: 'font-size:1.15rem;font-weight:800' }, prof.display_name),
-        el('div', { class: 'muted' }, '@' + prof.username),
-        badge(prof.role),
-        el('div', { class: 'muted', style: 'font-size:.75rem' },
-          pres?.state === 'online' ? 'Online now' : pres?.last_seen ? `Last seen ${relTime(pres.last_seen)}` : '',
-          ' · joined ' + new Date(prof.created_at).toLocaleDateString())));
-    if (prof.bio) body.append(el('p', { style: 'font-size:.88rem;color:var(--text-2);margin-bottom:14px' }, prof.bio));
-
-    if (self) {
-      body.append(editProfileForm(prof, rp));
-    } else if (isMemberPlus() && !prof.is_guest) {
-      // Hide user-action buttons when viewing staff (owner/admin).
-      // Server-side already rejects (migration 009), but UI shouldn't even show them.
-      const isStaff = prof.role === 'owner' || prof.role === 'admin';
-      // Friend-status aware action row (migration 022 added friend_status to user_public).
-      // 'none'      → Add friend
-      // 'pending_out' → Cancel request
-      // 'pending_in'  → Accept / Decline
-      // 'accepted'    → Message + Unfriend
-      // 'blocked_by_me' / 'blocks_me' → no friend actions
-      const fs = prof.friend_status || 'none';
-      const fId = prof.friendship_id;
-      const actionRow = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
-      // helper that re-renders this profile without closing the panel
-      const rebuild = async () => {
-        const fresh = await rpc('user_public', { target_id: userId });
-        const pres2 = state.presence.get(userId);
-        rp.panel.querySelector('.rp-body').innerHTML = '';
-        const newBody = renderProfileBody(fresh, pres2);
-        rp.panel.querySelector('.rp-body').append(newBody);
-      };
-
-      if (fs === 'none') {
-        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
-          try { await rpc('friend_request', { target_username: prof.username }); toast('Friend request sent', 'ok'); await rebuild(); }
-          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('user-add'), 'Add friend'));
-      } else if (fs === 'pending_out') {
-        // Cancel pending request I sent — no dedicated RPC; treat as friend_remove while pending.
-        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
-          if (!fId) return;
-          try {
-            // No "friend_cancel" RPC; use friend_remove (works on pending too) via direct delete via service is forbidden — instead, surface a hint.
-            await rpc('friend_remove', { other_id: prof.id });
-            toast('Friend request cancelled', 'ok');
-            await rebuild();
-          } catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('cross'), 'Cancel request'));
-      } else if (fs === 'pending_in') {
-        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
-          if (!fId) return;
-          try { await rpc('friend_respond', { friendship_id: fId, accept: true }); toast('Friend request accepted', 'ok'); await rebuild(); }
-          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('check'), 'Accept'));
-        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
-          if (!fId) return;
-          try { await rpc('friend_respond', { friendship_id: fId, accept: false }); toast('Friend request declined', 'ok'); await rebuild(); }
-          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('cross'), 'Decline'));
-      } else if (fs === 'accepted') {
-        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
-          rp.close();
-          // openDm is in dm.js — use hash navigation; dm.js auto-opens from route
-          location.hash = '/dm/' + prof.id;
-        } }, ic('envelope'), 'Message'));
-        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
-          if (!await confirmModal({ title: 'Unfriend ' + prof.display_name + '?', text: 'They will be removed from your friends list. You can send a new request later.', confirmLabel: 'Unfriend', danger: true })) return;
-          try { await rpc('friend_remove', { other_id: prof.id }); toast('Unfriended', 'ok'); await rebuild(); }
-          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('user-times'), 'Unfriend'));
-      }
-      // If blocked, no friend actions — Block/Report row below still available.
-
-      if (!isStaff) {
-        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
-          try { await rpc('friend_block', { other_id: prof.id }); toast('Blocked', 'ok'); rp.close(); }
-          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('ban'), 'Block'));
-        actionRow.append(el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report'));
-      }
-      body.append(actionRow);
-    }
+    renderProfileBody(body, prof, pres, userId, rp);
   } catch (e) { body.append(el('p', { class: 'muted' }, 'Failed to load profile.')); }
 }
 
