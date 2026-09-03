@@ -36,7 +36,18 @@ User A clicks Voice/Video Call → `call_initiate` inserts the row, the realtime
 - `handleIncoming` invoked from exactly one place (manager line 162)
 - `mountCallManager` invoked once at boot (main.js line 96); function idempotent
 
-**Deploy gate:** pushed to GitHub (`cd89be6`). NOT deployed to Netlify per spec §43 — needs real two-user A→B verification.
+**Deploy gate:** pushed to GitHub (`cd89be6`, `b08786a`, `b437371`). NOT deployed to Netlify — account credit limit hit, every deploy attempt returns `Account credit usage exceeded`. The user MUST redeploy manually:
+1. Add credits via app.netlify.com → account → Billing, OR
+2. Disable the envelope-mode blocker at `.netlify/state.json` and retry, OR
+3. Push the build to a different hosting target (GitHub Pages works as a drop-in)
+
+Until the new code is on the CDN, the user's browser keeps loading the OLD `0346cbb` build — `call-manager.js` returns 404, `views/call.js` still has the OLD view-scoped listener bug, and the incoming-call bubble never appears.
+
+### Diagnostic tooling added (`b437371`)
+- Small fixed overlay in the bottom-left of the page showing live realtime state (auth uid, channel name, SUBSCRIBED status, last event, mounted flag, incoming/active call ids).
+- Structured `console.info` logs at every key transition (`[chc-call-manager] mounting for uid <id>`, channel status, postgres_changes INSERT/UPDATE, call-bus events).
+- One-shot re-subscribe after a 5s delay on CHANNEL_ERROR/TIMED_OUT/CLOSED to recover from transient realtime disconnects without infinite loops.
+- Toggle off with `window.__CHC_HIDE_DEBUG__ = true` for production.
 
 ---
 
