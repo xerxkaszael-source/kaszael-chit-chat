@@ -11,6 +11,7 @@ let presenceChannel = null, typingChannel = null;
 let heartbeatTimer = null, typingTimer = null, typingExpireTimer = null;
 let lastTypingSent = 0;
 let destroyed = false;
+let _dbNotificationsRef = null;
 
 export function setConnState(s) {
   if (state.connState === s) return;
@@ -146,7 +147,7 @@ export async function startRealtime() {
 
   try {
     // Live unread count + browser notification for new notifications targeting me.
-    sb.channel('db-notifications')
+    _dbNotificationsRef = sb.channel('db-notifications')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
         const n = payload?.new;
         if (!n || n.user_id !== state.profile?.id) return;
@@ -229,5 +230,11 @@ export function stopRealtime() {
     try { c && sb.removeChannel(c); } catch {}
   }
   subMessages = subReactions = subPins = subBroadcasts = presenceChannel = typingChannel = null;
+  // Plus the inline db-notifications channel that was created without
+  // storing a reference. It's a single use; remove via tracker.
+  if (_dbNotificationsRef) {
+    try { sb.removeChannel(_dbNotificationsRef); } catch {}
+    _dbNotificationsRef = null;
+  }
   rpc('presence_leave', {}).catch(() => {});
 }

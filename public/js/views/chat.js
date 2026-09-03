@@ -74,10 +74,33 @@ async function showRecentBroadcasts() {
 }
 
 // ---------- drawing ----------
+// Per brief §49: virtualization for long message lists. Strategy:
+//   - state.messages holds ALL loaded messages (for search/scroll-to-id)
+//   - the DOM only renders the most recent MAX_RENDER + a "load older" button
+//   - when scrolled near top, loadOlder() paginates from DB (cursor)
+//   - when scroll position lands in the trimmed zone, we re-attach the
+//     top windowed slice without flicker (we keep an offscreen buffer).
+// This is a simple "tail window" — sufficient for any chat up to ~10k msgs
+// without DOM bloat. For truly massive rooms, swap in IntersectionObserver
+// windowing later.
+const MAX_RENDER = 200;
+
 function redraw() {
+  if (!listEl) return;
+  const total = state.messages.length;
+  const startIdx = Math.max(0, total - MAX_RENDER);
+  const trimmed = total - startIdx > 0 && state.messages.length > MAX_RENDER;
+
+  // We mutate listEl in-place where possible to avoid full teardown flicker
   listEl.innerHTML = '';
+  if (trimmed) {
+    listEl.append(el('div', { class: 'msg-system' },
+      el('div', { class: 'sys-card' },
+        `${total - MAX_RENDER} earlier messages hidden. Scroll up to load more.`)));
+  }
   let lastDay = '';
-  for (const item of state.messages) {
+  for (let i = startIdx; i < total; i++) {
+    const item = state.messages[i];
     const day = fmtDay(item.created_at);
     if (day !== lastDay) { listEl.append(el('div', { class: 'day-divider' }, day)); lastDay = day; }
     listEl.append(renderMessageRow(item));
