@@ -39,6 +39,12 @@ EOF
 
 echo "[deploy] config.js injected: $(grep -o 'anonKey:."[^"]\{12\}' "$BUILD/js/config.js")...(${#ANON} chars)"
 
+# 2b. Inject build marker (short commit SHA) into index.html so users can verify
+# which commit they are running (per supabase skill frontend-integration-pitfalls).
+SHA="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+sed -i "s/__BUILD_SHA__/${SHA}/g" "$BUILD/index.html"
+echo "[deploy] index.html build marker: $(grep -o 'build [a-z0-9]\{7\}' "$BUILD/index.html")"
+
 # 3. Zip (Termux has no zip; use Python)
 rm -f "$ZIP"
 python3 - <<PYEOF
