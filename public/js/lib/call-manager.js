@@ -58,18 +58,21 @@ let _incomingExpiryTimer = null;// auto-dismiss after 60s
 const INCOMING_TIMEOUT_MS = 60_000;  // matches DB call_miss_sweep
 
 // ----- debug overlay (development-time diagnostics) -----
-// Toggle with `window.__CHC_CALL_DEBUG__ = true` (default true). Shows a small
-// fixed overlay in the bottom-left with realtime state — channel name, auth
-// uid, SUBSCRIBED/CLOSED status, last event, last error. Hidden in production
-// builds when window.__CHC_HIDE_DEBUG__ is set.
+// BOTH overlays default to OFF. To enable in production for debugging:
+//   window.__CHC_CALL_DEBUG__ = true    → bottom-left [CALL RT] panel
+//   window.__CHC_PERM_DEBUG__ = true    → bottom-right [PERM] panel
+//   window.chcCallDebug.permEnable() / .debugEnable()  → runtime toggle
+// These overlays were annoying during real use; they are now strictly opt-in
+// for diagnostics. The bottom-left panel is also de-activated by default
+// because most users don't need realtime diagnostics in production.
 const _debug = { lastChannel: null, lastStatus: null, lastEvent: null, lastError: null };
 
 function isDebug() {
   try {
     if (typeof window === 'undefined') return false;
     if (window.__CHC_HIDE_DEBUG__) return false;
-    if (window.__CHC_CALL_DEBUG__ === false) return false;
-    return true; // default on
+    // Default OFF. Must explicitly enable.
+    return window.__CHC_CALL_DEBUG__ === true;
   } catch { return false; }
 }
 
@@ -194,9 +197,13 @@ export function mountCallManager() {
   renderIncoming();
   renderActive();
 
-  // 6. Start the permission diagnostic panel if dev enabled it via the
-  //    console: `window.__CHC_PERM_DEBUG__ = true`.
-  try { startPermDebugOverlay(); } catch {}
+  // 6. Perm diagnostic overlay is opt-in only (do not auto-mount in
+  //    production — toggled via window.__CHC_PERM_DEBUG__ = true).
+  try {
+    if (typeof window !== 'undefined' && window.__CHC_PERM_DEBUG__ === true) {
+      startPermDebugOverlay();
+    }
+  } catch {}
 
   // Expose a small console API for runtime debugging.
   try {
@@ -371,7 +378,8 @@ function renderIncoming() {
         el('button', { class: 'btn danger large',
             onclick: () => doDecline() }, ic('phone-slash'), ' Decline'),
         el('button', { class: 'btn primary large',
-            onclick: () => doAccept(), disabled: isAccepting ? '' : null }, ic('phone-call'), ' ', acceptLabel))));
+            onclick: () => doAccept() }, ic('phone-call'),
+          ' ', el('span', { class: 'chc-accept-label' }, acceptLabel))));
   document.body.append(modal);
 }
 
@@ -380,29 +388,33 @@ async function doAccept() {
   const callId = _incomingCall.id;
   const acceptBtn = document.querySelector('#call-incoming-modal .btn.primary');
   // Idempotent: if already accepting, no-op.
+  if (acceptBtn && acceptBtn.disabled) return;
   if (acceptBtn) {
-    if (acceptBtn.disabled) return;
     acceptBtn.disabled = true;
-    acceptBtn.textContent = 'Accepting…';
+    // Replace innerHTML so the icon is preserved (textContent nukes it).
+    const label = acceptBtn.querySelector('.chc-accept-label');
+    if (label) label.textContent = 'Accepting…';
+    else acceptBtn.textContent = 'Accepting…';
   }
-  // DON'T clear _incomingCall here — Bug #1 fix: keep the modal visible
-  // until lib/call.accept() transitions state past incoming_ringing.
-  // The manager will hide the modal when state machine reaches
-  // 'connected' / 'failed' / 'declined' (see handleCallEvent below).
   stopRingtone();
   clearTimeout(_incomingExpiryTimer); _incomingExpiryTimer = null;
   try {
     await accept();
   } catch (e) {
-    toast(e.chc && e.chc.text || e.message || 'Accept failed', 'error');
-    if (acceptBtn) { acceptBtn.disabled = false; }
+    if (acceptBtn) {
+      acceptBtn.disabled = false;
+      const label = acceptBtn.querySelector('.chc-accept-label');
+      if (label) label.textContent = 'Accept';
+      else acceptBtn.textContent = 'Accept';
+    }
   }
-  // If still in incoming_ringing after await (rare, e.g. accept returned
-  // early because activeCall was null), reset _incomingCall and re-render.
-  const cur = getActive();
-  if (!cur || cur.callId !== callId) {
-    // activeCall was teardown'd; nothing to do.
-  }
+  // Belt-and-braces: re-render the incoming modal so any error state
+  // surfaced by lib/call.accept() (e.g. state === 'failed' from media
+  // rejection) is reflected in the UI. If state machine has moved past
+  // incoming_ringing/accepting, renderIncoming() will tear down the modal
+  // and renderActive() will show the active panel with the error banner.
+  renderIncoming();
+  renderActive();
 }
 
 async function doDecline() {
@@ -472,16 +484,19 @@ function buildActivePanel(a) {
   const micBtn = el('button',
     { class: `call-ctrl${isMicOn() ? '' : ' muted'}`, title: isMicOn() ? 'Mute mic' : 'Unmute mic',
       'aria-label': isMicOn() ? 'Mute mic' : 'Unmute mic',
-      onclick: () => { toggleMic(); renderActive(); } },
+      onclick: () => { toggleMic(); renderActive(); },
+      style: 'display:none' },  // hidden — bubble-row ctrl-mute is the single source
     ic(isMicOn() ? 'microphone' : 'microphone-slash'));
   const camBtn = a.kind === 'video' ? el('button',
     { class: `call-ctrl${isCamOn() ? '' : ' muted'}`, title: isCamOn() ? 'Camera off' : 'Camera on',
       'aria-label': isCamOn() ? 'Camera off' : 'Camera on',
-      onclick: () => { toggleCam(); renderActive(); } },
+      onclick: () => { toggleCam(); renderActive(); },
+      style: 'display:none' },  // hidden — bubble-row ctrl-cam is the single source
     ic(isCamOn() ? 'video-camera' : 'video-slash')) : null;
   const hangupBtn = el('button',
     { class: 'call-ctrl danger', title: 'Hang up', 'aria-label': 'Hang up',
-      onclick: () => hangup() },
+      onclick: () => hangup(),
+      style: 'display:none' },  // hidden — bubble-row ctrl-hangup is the single source
     ic('phone-slash'));
   const minimizeBtn = el('button',
     { class: 'call-ctrl ctrl-minimize', title: minimized ? 'Expand' : 'Minimize',
@@ -489,14 +504,20 @@ function buildActivePanel(a) {
       onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
     ic(minimized ? 'arrow-up-right-and-arrow-down-left-from-center' : 'arrow-down-right-and-arrow-up-left-from-center'));
 
-  // Show a "connecting…" pill during accepting/connecting (Bug #1 — UI
-  // stays visible while media/WebRTC settle).
-  const connPill = (a.state === 'accepting' || a.state === 'connecting' || a.state === 'outgoing_calling' || a.state === 'outgoing_ringing')
+  // Show a "connecting…" pill during accepting/connecting/ending/declining
+  // (Bug C fix: while RPC is in flight, surface a status pill so the user
+  // sees that teardown is in progress and isn't a hang).
+  const connPillState = a.state === 'accepting' ? 'Requesting permission…'
+    : a.state === 'connecting' ? 'Connecting…'
+    : a.state === 'outgoing_calling' ? 'Calling…'
+    : a.state === 'outgoing_ringing' ? 'Ringing…'
+    : a.state === 'ending' ? 'Disconnecting…'
+    : a.state === 'declining' ? 'Declining…'
+    : null;
+  const connPill = connPillState
     ? el('div', { class: 'call-conn-pill',
         style: 'margin-top:6px;padding:4px 10px;background:rgba(74,158,255,.18);color:#9be7ff;border-radius:999px;font-size:11px;text-align:center;font-weight:600;text-transform:uppercase;letter-spacing:.04em' },
-      a.state === 'accepting' ? 'Requesting permission…' :
-      a.state === 'connecting' ? 'Connecting…' :
-      a.state === 'outgoing_calling' ? 'Calling…' : 'Ringing…')
+      connPillState)
     : null;
 
   const bubbleRow = el('div', { class: 'call-active-bubble-row' },
@@ -510,6 +531,10 @@ function buildActivePanel(a) {
       { class: 'ctrl-cam', title: isCamOn() ? 'Camera off' : 'Camera on', 'aria-label': 'Toggle camera',
         onclick: (e) => { e.stopPropagation(); toggleCam(); renderActive(); } },
       ic(isCamOn() ? 'video' : 'video-slash')) : null,
+    !minimized ? el('button',
+      { class: 'ctrl-minimize', title: 'Minimize', 'aria-label': 'Minimize',
+        onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
+      ic('arrow-down-right-and-arrow-up-left-from-center')) : null,
     el('button', { class: 'ctrl-hangup', title: 'Hang up', 'aria-label': 'Hang up',
       onclick: (e) => { e.stopPropagation(); hangup(); } },
       ic('phone-slash')));
@@ -523,9 +548,13 @@ function buildActivePanel(a) {
     minimized ? null : el('div', { class: 'call-active-name' }, other.display_name || 'In call'),
     minimized ? null : el('div', { class: 'call-active-state' }, a.state),
     connPill,
-    errorBanner,
-    minimized ? null : el('div', { class: 'call-active-controls' },
-      micBtn, camBtn, minimizeBtn, hangupBtn));
+    errorBanner
+    // Note: the full controls row (micBtn/camBtn/hangupBtn) is intentionally
+    // NOT rendered here — those buttons are in the bubble row at the top of
+    // the panel (compact always-visible). Re-rendering them here would create
+    // duplicate icons. (Fixes Bug A.) The minimizeBtn is rendered inside
+    // the bubble row when not minimized.
+  );
 
   if (minimized) {
     panel.addEventListener('click', (e) => {

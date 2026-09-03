@@ -306,7 +306,7 @@ export async function accept() {
     // Step 2: secure context check (spec §11).
     if (typeof window !== 'undefined' && window.isSecureContext === false) {
       throw makeMediaError('SecurityError',
-        'Page is not in a secure context. Kaszael Chit&Chat requires HTTPS to access the camera/microphone.');
+        'Page is not in a secure context. Kaszael Ngobrol requires HTTPS to access the camera/microphone.');
     }
 
     // Step 3: mediaDevices availability (spec §11).
@@ -387,14 +387,34 @@ export async function cancel() {
 }
 
 // ---- hangup (either side, any non-terminal state) ----
+// Always teardown after a fixed timeout so the UI can never get stuck
+// showing the panel if call_end RPC hangs (Bug C fix).
+const HANGUP_FALLBACK_MS = 3000;
 export async function hangup(reason = 'ended') {
   if (!activeCall) return;
   if (isTerminal(activeCall.state)) return;
   cancelCallerTimeout(activeCall.callId);
   if (!setCallState(activeCall, 'ending')) return;
   emit({ type: 'state', call: activeCall });
-  try { await rpc('call_end', { v_call_id: activeCall.callId, v_reason: reason }); } catch {}
-  teardown('ended');
+  // Start a hard timeout that fires teardown unconditionally. Even if the
+  // RPC hangs or the user closes the tab, this guarantees the panel goes away.
+  const fallback = setTimeout(() => {
+    if (activeCall && !isTerminal(activeCall.state)) {
+      console.warn('[chc-call] hangup fallback fired — RPC took too long');
+      teardown(reason);
+    }
+  }, HANGUP_FALLBACK_MS);
+  try {
+    await rpc('call_end', { v_call_id: activeCall.callId, v_reason: reason });
+    clearTimeout(fallback);
+    teardown('ended');
+  } catch (e) {
+    // RPC failed — clear fallback (it'll fire teardown on its own if needed),
+    // but teardown now so the user isn't left waiting.
+    clearTimeout(fallback);
+    console.warn('[chc-call] hangup RPC failed, forcing teardown', e);
+    teardown('ended');
+  }
 }
 
 // ---- media ----
