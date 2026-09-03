@@ -33,7 +33,7 @@ async function boot() {
   if (session) {
     // Clean up stale call rows on app boot (covers refresh-after-crash case).
     // Safe no-op if no session or no stale rows.
-    try { await selfRecoverStale(); } catch {}
+    try { await selfRecoverStale(); } catch (e) {}
     const ok = await hydrateProfile();
     if (ok) { enterApp(); return; }
     // session exists but profile gone/invalid → sign out cleanly
@@ -55,10 +55,10 @@ async function hydrateProfile() {
       return false;
     }
     if (!state.isGuest) {
-      try { state.settings = await loadSettings(); } catch { state.settings = null; }
+      try { state.settings = await loadSettings(); } catch (e) { state.settings = null; }
     }
     return true;
-  } catch {
+  } catch (e) {
     return false;
   }
 }
@@ -75,7 +75,7 @@ async function onAuthed() {
   try {
     const n = await selfRecoverStale();
     if (n > 0) toast(`Cleared ${n} stale call${n > 1 ? 's' : ''} from a previous session`, 'info', 3000);
-  } catch {}
+  } catch (e) {}
   const ok = await hydrateProfile();
   if (!ok) { renderAuth(ROOT, onAuthed); return; }
   enterApp();
@@ -173,13 +173,13 @@ subscribe((topic) => {
   if (topic === 'kicked-banned') {
     // heartbeat told us we're kicked/banned → force back to auth
     stopRealtime();
-    try { resetCallManagerUI(); } catch {}
+    try { resetCallManagerUI(); } catch (e) {}
     entered = false;
     sb.auth.signOut().finally(() => location.reload());
   }
 });
 
-window.addEventListener('beforeunload', () => { try { stopRealtime(); } catch {} });
+window.addEventListener('beforeunload', () => { try { stopRealtime(); } catch (e) {} });
 
 boot().catch((e) => {
   console.error('[chc] boot failed', e);

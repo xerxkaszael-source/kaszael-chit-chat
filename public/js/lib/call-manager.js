@@ -73,7 +73,7 @@ function isDebug() {
     if (window.__CHC_HIDE_DEBUG__) return false;
     // Default OFF. Must explicitly enable.
     return window.__CHC_CALL_DEBUG__ === true;
-  } catch { return false; }
+  } catch (e) { return false; }
 }
 
 function ensureDebugOverlay() {
@@ -142,7 +142,7 @@ export function mountCallManager() {
   _attachStateListener(() => {
     if (!state.profile) {
       unmountCallManager();
-      try { _incomingCall = null; renderIncoming(); renderActive(); } catch {}
+      try { _incomingCall = null; renderIncoming(); renderActive(); } catch (e) {}
     } else {
       renderActive();
     }
@@ -184,7 +184,7 @@ export function mountCallManager() {
           _reconnectInFlight = true;
           setTimeout(() => {
             _reconnectInFlight = false;
-            try { _pgChannel && _pgChannel.subscribe(); } catch {}
+            try { _pgChannel && _pgChannel.subscribe(); } catch (e) {}
           }, 5000);
         }
       }
@@ -203,7 +203,7 @@ export function mountCallManager() {
     if (typeof window !== 'undefined' && window.__CHC_PERM_DEBUG__ === true) {
       startPermDebugOverlay();
     }
-  } catch {}
+  } catch (e) {}
 
   // Expose a small console API for runtime debugging.
   try {
@@ -220,7 +220,7 @@ export function mountCallManager() {
         debugDisable: () => { window.__CHC_HIDE_DEBUG__ = true; const e = document.getElementById('chc-call-debug'); if (e) e.remove(); },
       });
     }
-  } catch {}
+  } catch (e) {}
 }
 
 let _reconnectInFlight = false;
@@ -228,7 +228,7 @@ let _reconnectInFlight = false;
 // Subscribe to the global state pubsub exactly once. The returned handle
 // overwrites any prior _stateUnsub so we never accumulate listeners.
 function _attachStateListener(handler) {
-  if (_stateUnsub) { try { _stateUnsub(); } catch {} _stateUnsub = null; }
+  if (_stateUnsub) { try { _stateUnsub(); } catch (e) {} _stateUnsub = null; }
   // Lazy import avoids a circular reference at module-eval time.
   import('./state.js').then(({ subscribe }) => {
     _stateUnsub = subscribe((topic) => handler(topic));
@@ -238,9 +238,9 @@ function _attachStateListener(handler) {
 export function unmountCallManager() {
   if (!mounted) return;
   mounted = false;
-  try { _pgChannel && sb.removeChannel(_pgChannel); } catch {}
-  try { _callUnsub && _callUnsub(); } catch {}
-  try { _stateUnsub && _stateUnsub(); } catch {}
+  try { _pgChannel && sb.removeChannel(_pgChannel); } catch (e) {}
+  try { _callUnsub && _callUnsub(); } catch (e) {}
+  try { _stateUnsub && _stateUnsub(); } catch (e) {}
   _pgChannel = null;
   _callUnsub = null;
   _stateUnsub = null;
@@ -424,7 +424,7 @@ async function doDecline() {
   renderIncoming();
   stopRingtone();
   clearTimeout(_incomingExpiryTimer); _incomingExpiryTimer = null;
-  try { await decline('declined'); } catch {}
+  try { await decline('declined'); } catch (e) {}
 }
 
 // ----- active-call floating panel -----
@@ -622,7 +622,7 @@ function enableDrag(panel) {
     panel.style.bottom = 'auto';
     panel.classList.add('dragging');
     _dragState = { startX: e.clientX, startY: e.clientY, origX: rect.left, origY: rect.top, el: panel, dragged: false, pid };
-    try { panel.setPointerCapture && panel.setPointerCapture(pid); } catch {}
+    try { panel.setPointerCapture && panel.setPointerCapture(pid); } catch (e) {}
     e.preventDefault();
   };
   const onMove = (e) => {
@@ -640,7 +640,7 @@ function enableDrag(panel) {
     const rect = panel.getBoundingClientRect();
     setPanelPosition(rect.left, rect.top);
     panel.classList.remove('dragging');
-    try { panel.releasePointerCapture && panel.releasePointerCapture(pid); } catch {}
+    try { panel.releasePointerCapture && panel.releasePointerCapture(pid); } catch (e) {}
     setTimeout(() => { if (_dragState && _dragState.pid === pid) _dragState = null; }, 50);
   };
   panel.addEventListener('pointerdown', onDown);
@@ -671,11 +671,11 @@ function playRingtone() {
         osc.connect(g); g.connect(ctx.destination);
         osc.frequency.value = 440; g.gain.value = 0.08;
         osc.start(); osc.stop(ctx.currentTime + 0.3);
-      } catch {}
+      } catch (e) {}
     };
     beep();
     _ringtoneTimer = setInterval(beep, 1000);
-  } catch {}
+  } catch (e) {}
 }
 function stopRingtone() {
   if (_ringtoneTimer) { clearInterval(_ringtoneTimer); _ringtoneTimer = null; }
@@ -752,7 +752,7 @@ function handleRecovery() {
         try { _pgChannel.subscribe(); } catch (e) { console.warn('[chc-call-manager] re-subscribe failed', e); }
         // Authoritative server read: pick up any active row that arrived while
         // we were disconnected (Bug #2 fix).
-        try { await pollActive(); } catch {}
+        try { await pollActive(); } catch (e) {}
         setDebugLine('recovery: re-subscribed');
       }
     } finally {
@@ -817,7 +817,7 @@ function ensurePermDebugOverlay() {
   try {
     if (typeof window === 'undefined') return;
     if (!window.__CHC_PERM_DEBUG__) return;
-  } catch { return; }
+  } catch (e) { return; }
   if (document.getElementById('chc-perm-debug')) return;
   const o = el('div',
     { id: 'chc-perm-debug',

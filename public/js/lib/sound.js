@@ -29,7 +29,7 @@ export function playMessageSound() {
   try {
     tone(880, 0, 0.12, 'sine', 0.06);
     tone(1318.5, 0.07, 0.16, 'sine', 0.045);
-  } catch { /* audio blocked until first gesture — ignore */ }
+  } catch (e) { /* audio blocked until first gesture — ignore */ }
 }
 
 // Distinct three-tone "knock" for incoming private DMs (so user knows it's DM,
@@ -40,7 +40,7 @@ export function playDmSound() {
     tone(987.77, 0, 0.10, 'sine', 0.06);
     tone(1318.5, 0.08, 0.12, 'sine', 0.05);
     tone(1567.98, 0.18, 0.18, 'sine', 0.045);
-  } catch {}
+  } catch (e) {}
 }
 
 export function playMentionSound() {
@@ -49,7 +49,7 @@ export function playMentionSound() {
     tone(659.25, 0, 0.12, 'triangle', 0.07);
     tone(987.77, 0.08, 0.14, 'triangle', 0.06);
     tone(1318.5, 0.16, 0.18, 'triangle', 0.05);
-  } catch {}
+  } catch (e) {}
 }
 
 export function playBroadcastSound() {
@@ -58,12 +58,12 @@ export function playBroadcastSound() {
     tone(523.25, 0, 0.16, 'triangle', 0.08);
     tone(659.25, 0.12, 0.16, 'triangle', 0.08);
     tone(783.99, 0.24, 0.24, 'triangle', 0.08);
-  } catch {}
+  } catch (e) {}
 }
 
 // unlock audio on first user gesture (mobile autoplay policy)
 export function installAudioUnlock() {
-  const unlock = () => { try { ac(); } catch {} };
+  const unlock = () => { try { ac(); } catch (e) {} };
   document.addEventListener('pointerdown', unlock, { once: true });
   document.addEventListener('keydown', unlock, { once: true });
 }

@@ -27,7 +27,7 @@ export function getStatus() { return _status; }
 export function setStatus(s, opts = {}) {
   if (!STATUSES.includes(s)) return;
   _status = s;
-  try { localStorage.setItem(STORAGE_KEY, s); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, s); } catch (e) {}
   for (const fn of _listeners) fn(s);
   notify('presence');
   if (!opts.silent && typeof window !== 'undefined') {
@@ -45,7 +45,7 @@ export function start() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved && STATUSES.includes(saved)) _status = saved;
     else _status = 'online';
-  } catch { _status = 'online'; }
+  } catch (e) { _status = 'online'; }
 
   // activity listeners (passive — debounced)
   const onActivity = () => {

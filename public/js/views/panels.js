@@ -129,7 +129,7 @@ export async function openPins() {
           el('div', { class: 'lr-sub' }, p.message.content?.slice(0, 100) || '(attachment)')),
         myLevel() >= 40 ? btn('cross', 'Unpin', async () => { try { await rpc('message_unpin', { message_id: p.message.id }); openPins(); } catch (e) { toast(e.chc?.text || 'Unpin failed', 'error'); } }) : null));
     }
-  } catch { body.append(el('p', { class: 'muted' }, 'Failed to load pins.')); }
+  } catch (e) { body.append(el('p', { class: 'muted' }, 'Failed to load pins.')); }
 }
 
 // ---------- SEARCH ----------

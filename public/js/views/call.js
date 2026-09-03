@@ -23,7 +23,7 @@ let historyRows = [];
 // Belt-and-braces: if the manager hasn't mounted yet (route hit before
 // enterApp finished), mount it now. mountCallManager is idempotent.
 function ensureManager() {
-  try { ensureCallManager(); } catch {}
+  try { ensureCallManager(); } catch (e) {}
 }
 
 export async function renderCallView(mainEl, sub = 'inbox', callKind = null, calleeId = null) {

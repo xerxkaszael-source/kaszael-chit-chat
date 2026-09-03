@@ -101,7 +101,7 @@ function drawSidebar() {
   if (state.isGuest) {
     nav.append(el('div', { class: 'side-section-title' }, 'Guest session'));
     nav.append(sideItem('exit', 'Leave & erase guest data', async () => {
-      try { await rpc('guest_leave'); } catch {}
+      try { await rpc('guest_leave'); } catch (e) {}
       await sb.auth.signOut();
       location.hash = ''; location.reload();
     }));

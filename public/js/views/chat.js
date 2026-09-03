@@ -39,7 +39,7 @@ async function loadInitial() {
       state.attachments.get(a.message_id).push(a);
     }
     await refreshReactionsForVisible();
-    try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; } catch {}
+    try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; } catch (e) {}
     await showRecentBroadcasts();
     // Bug fix: clear any retry card from a previous failed load — otherwise it
     // lingers on screen forever even after messages loaded.
@@ -70,7 +70,7 @@ async function showRecentBroadcasts() {
       const { showBroadcastBubble } = await import('../lib/broadcast.js');
       for (const b of broadcasts.slice(0, 3)) showBroadcastBubble(b);
     }
-  } catch { state.broadcasts = []; }
+  } catch (e) { state.broadcasts = []; }
 }
 
 // ---------- drawing ----------

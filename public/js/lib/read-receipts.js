@@ -59,7 +59,7 @@ async function flush(convId) {
   try {
     await markDmRead(convId, highest);
     // Broadcast our claim for other tabs
-    try { localStorage.setItem(key(convId), JSON.stringify({ id: highest, at: Date.now() })); } catch {}
+    try { localStorage.setItem(key(convId), JSON.stringify({ id: highest, at: Date.now() })); } catch (e) {}
     // Optimistic local inbox decrement
     if (state.dmInbox && Array.isArray(state.dmInbox)) {
       const row = state.dmInbox.find(r => r.conversation_id === convId);
@@ -69,7 +69,7 @@ async function flush(convId) {
         notify('dm-unread');
       }
     }
-  } catch {
+  } catch (e) {
     // restore queue for retry
     pending.set(convId, ids);
     timers.set(convId, setTimeout(() => flush(convId), FLUSH_MS));
@@ -98,7 +98,7 @@ if (typeof window !== 'undefined') {
           window.__chcMarkReadByOther(claim.id);
         }
       }
-    } catch {}
+    } catch (e) {}
   });
 }
 

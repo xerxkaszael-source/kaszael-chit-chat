@@ -118,7 +118,7 @@ async function looksLikeSwappedDmArgs(first, second) {
     const swap = profileRows === 0 && convRows > 0;
     _swapCheckCache.set(key, { v: swap, t: Date.now() });
     return swap;
-  } catch {
+  } catch (e) {
     return false;
   }
 }
@@ -484,7 +484,7 @@ async function ensureProfile(uid) {
       state.profiles.set(uid, data);
       return data;
     }
-  } catch {}
+  } catch (e) {}
   return cached || null;
 }
 
@@ -493,7 +493,7 @@ async function ensureProfile(uid) {
 // members of the conversation can SELECT it; the realtime publication respects RLS.
 function subscribeRealtime() {
   if (realtimeChannel) {
-    try { sb.removeChannel(realtimeChannel); } catch {}
+    try { sb.removeChannel(realtimeChannel); } catch (e) {}
     realtimeChannel = null;
   }
   realtimeChannel = sb.channel(`dm:${currentConvId}`)
@@ -540,7 +540,7 @@ function subscribeRealtime() {
 // payloads carry no content, only "X is typing".
 function subscribeTyping() {
   if (typingDmChannel) {
-    try { sb.removeChannel(typingDmChannel); } catch {}
+    try { sb.removeChannel(typingDmChannel); } catch (e) {}
     typingDmChannel = null;
   }
   typingDmChannel = sb.channel(`typing-dm:${currentConvId}`, { config: { broadcast: { self: false } } })
@@ -561,7 +561,7 @@ function subscribeTyping() {
 // message_id would require enumerating all visible IDs which changes on scroll).
 function subscribeReactionsRealtime() {
   if (reactionsChannel) {
-    try { sb.removeChannel(reactionsChannel); } catch {}
+    try { sb.removeChannel(reactionsChannel); } catch (e) {}
     reactionsChannel = null;
   }
   reactionsChannel = sb.channel('dm-reactions')
@@ -576,7 +576,7 @@ function subscribeReactionsRealtime() {
           dmReactions.get(r.message_id).push(r);
         }
         drawMessages();
-      } catch {}
+      } catch (e) {}
     })
     .subscribe();
 }
@@ -584,7 +584,7 @@ function subscribeReactionsRealtime() {
 // ---- reads realtime: when the OTHER side marks our messages as read ----
 function subscribeReadsRealtime() {
   if (readsChannel) {
-    try { sb.removeChannel(readsChannel); } catch {}
+    try { sb.removeChannel(readsChannel); } catch (e) {}
     readsChannel = null;
   }
   readsChannel = sb.channel('dm-reads')
@@ -640,11 +640,11 @@ export async function cleanupDmRealtime() {
   // ~1.5s (the debounce window) and, worse, the read-mark can be lost if the
   // page is refreshed before the debounce fires.
   if (currentConvId) {
-    try { await _rr_flushNow(currentConvId); } catch {}
+    try { await _rr_flushNow(currentConvId); } catch (e) {}
   }
   for (const ref of [realtimeChannel, typingDmChannel, reactionsChannel, readsChannel]) {
     if (ref) {
-      try { sb.removeChannel(ref); } catch {}
+      try { sb.removeChannel(ref); } catch (e) {}
     }
   }
   realtimeChannel = typingDmChannel = reactionsChannel = readsChannel = null;
@@ -658,5 +658,5 @@ export async function cleanupDmRealtime() {
   // now-decremented unread count. refreshDmUnread is already imported at the
   // top of this module — no need for a dynamic import() here (dynamic import
   // with a relative path was tripping the browser's ESM parser).
-  try { await refreshDmUnread(); } catch {}
+  try { await refreshDmUnread(); } catch (e) {}
 }

@@ -260,7 +260,7 @@ export async function handleIncoming(callId, callerId, kind) {
       rpc('call_decline', { v_call_id: callId, v_reason: 'blocked' }).catch(() => {});
       return;
     }
-  } catch {}
+  } catch (e) {}
   // Build the canonical activeCall in the `incoming_ringing` state.
   // From here, the callee's UI (managed by call-manager.js) shows the
   // incoming bubble. The state NEVER goes back to null until teardown.
@@ -369,7 +369,7 @@ export async function decline(reason = 'declined') {
   if (!setCallState(activeCall, 'declining')) return;
   emit({ type: 'state', call: activeCall });
   cancelCallerTimeout(activeCall.callId);
-  try { await rpc('call_decline', { v_call_id: activeCall.callId, v_reason: reason }); } catch {}
+  try { await rpc('call_decline', { v_call_id: activeCall.callId, v_reason: reason }); } catch (e) {}
   // Use 'declined' if reason is 'declined', else keep the reason text.
   teardown(reason === 'declined' ? 'declined' : reason);
 }
@@ -382,7 +382,7 @@ export async function cancel() {
   cancelCallerTimeout(activeCall.callId);
   if (!setCallState(activeCall, 'cancelled')) return;
   emit({ type: 'state', call: activeCall });
-  try { await rpc('call_cancel', { v_call_id: activeCall.callId }); } catch {}
+  try { await rpc('call_cancel', { v_call_id: activeCall.callId }); } catch (e) {}
   teardown('cancelled');
 }
 
@@ -480,7 +480,7 @@ function friendlyMediaError(e, kind) {
 function releaseMedia(stream) {
   if (!stream) return;
   for (const track of stream.getTracks()) {
-    try { track.stop(); } catch {}
+    try { track.stop(); } catch (e) {}
   }
 }
 
@@ -495,7 +495,7 @@ function buildPeerConnection() {
       // Wrap as JSON for compatibility.
       try {
         sendSignal({ type: 'ice', payload: candidate.toJSON ? candidate.toJSON() : candidate });
-      } catch {}
+      } catch (e) {}
       // DB fallback — server enforces participant + call_id membership.
       rpc('call_ice_candidate', { v_call_id: activeCall.callId, v_candidate: candidate.toJSON() }).catch(() => {});
     }
@@ -570,7 +570,7 @@ function tryIceRestart(pc) {
 // ---- signaling ----
 let signalingChannel = null;
 function setupSignaling() {
-  if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch {} }
+  if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch (e) {} }
   signalingChannel = sb.channel(`call:${activeCall.callId}`, { config: { broadcast: { self: false } } });
   signalingChannel
     .on('broadcast', { event: 'signal' }, async ({ payload }) => {
@@ -641,7 +641,7 @@ async function onSignal(msg) {
       sendSignal({ type: 'answer', payload: answer });
     } else if (msg.type === 'ice') {
       if (!activeCall.peer) activeCall.peer = buildPeerConnection();
-      try { await activeCall.peer.addIceCandidate(new RTCIceCandidate(msg.payload)); } catch { /* late candidate */ }
+      try { await activeCall.peer.addIceCandidate(new RTCIceCandidate(msg.payload)); } catch (e) { /* late candidate */ }
     } else if (msg.type === 'bye') {
       teardown(msg.reason || 'ended');
     } else if (msg.type === 'renegotiate') {
@@ -753,14 +753,14 @@ function teardown(reason) {
     try { signalingChannel.send({
       type: 'broadcast', event: 'signal',
       payload: { type: 'bye', from: getUserId(), call_id: prev.callId, reason }
-    }); } catch {}
+    }); } catch (e) {}
   }
-  if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch {} signalingChannel = null; }
+  if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch (e) {} signalingChannel = null; }
   releaseMedia(prev.localStream);
   if (prev.remoteStream) {
-    for (const t of prev.remoteStream.getTracks()) { try { t.stop(); } catch {} }
+    for (const t of prev.remoteStream.getTracks()) { try { t.stop(); } catch (e) {} }
   }
-  if (prev.peer) { try { prev.peer.close(); } catch {} }
+  if (prev.peer) { try { prev.peer.close(); } catch (e) {} }
   const final = Object.assign({}, prev, { state: reason });
   activeCall = null;
   emit({ type: 'ended', call: final, reason });
@@ -816,7 +816,7 @@ export async function pollActive() {
         emit({ type: 'rehydrate', call: r.call, stale });
       }
     }
-  } catch {}
+  } catch (e) {}
 }
 
 // Same as pollActive but proactively cleans up OUR stale rows BEFORE the
@@ -826,7 +826,7 @@ export async function selfRecoverStale() {
   try {
     const n = await rpc('call_self_recover_all', {});
     return n;
-  } catch { return 0; }
+  } catch (e) { return 0; }
 }
 
 // Hard cleanup on tab close / refresh during an active call.
@@ -854,7 +854,7 @@ export function installUnloadCleanup() {
       releaseMedia(activeCall.localStream);
       if (activeCall.peer) activeCall.peer.close();
       if (signalingChannel) sb.removeChannel(signalingChannel);
-    } catch {}
+    } catch (e) {}
   };
   window.addEventListener('beforeunload', cleanup);
   window.addEventListener('pagehide', cleanup);

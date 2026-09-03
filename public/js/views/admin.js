@@ -93,7 +93,7 @@ async function moderationView(main, sub = null) {
     // Auto-scroll the active tab into view (so far-right tab is reachable).
     const btn = tabs.querySelector(`button[data-tab="${name}"]`);
     if (btn && typeof btn.scrollIntoView === 'function') {
-      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch {}
+      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (e) {}
     }
   }
   // Append tab buttons NOW that setActive + tabs both exist.
@@ -198,7 +198,7 @@ async function lookupTab(host) {
       const { users } = await rpc('owner_users_list', { q }).catch(async () => ({ users: [] }));
       results.innerHTML = '';
       for (const u of (users || []).slice(0, 10)) results.append(userActionsRow(u, () => { /* lookup is live, no full refresh needed */ }));
-    } catch {}
+    } catch (e) {}
   });
 }
 

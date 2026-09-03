@@ -23,7 +23,7 @@ export async function renderLocationSettings(mainEl) {
 }
 
 async function load() {
-  try { _data = await getOwn(); } catch { _data = { set: false, error: 'load_failed' }; }
+  try { _data = await getOwn(); } catch (e) { _data = { set: false, error: 'load_failed' }; }
   render();
 }
 

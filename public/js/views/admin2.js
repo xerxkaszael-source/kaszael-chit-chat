@@ -89,7 +89,7 @@ export async function ownerView(main, sub = null) {
     // can always see which tab is selected on narrow screens).
     const btn = tabs.querySelector(`button[data-tab="${name}"]`);
     if (btn && typeof btn.scrollIntoView === 'function') {
-      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch {}
+      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch (e) {}
     }
   }
   tabs.append(

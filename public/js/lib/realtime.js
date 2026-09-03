@@ -38,7 +38,7 @@ function onMessageEvent(payload) {
       const mentioned = mine && n.content?.toLowerCase().includes('@' + mine);
       mentioned ? playMentionSound() : playMessageSound();
       if (document.hidden && mine) {
-        try { if (typeof Notification !== 'undefined') new Notification(`New message — ${profileOf(n.sender_id)?.display_name || 'Someone'}`, { body: n.content?.slice(0, 100) }); } catch {}
+        try { if (typeof Notification !== 'undefined') new Notification(`New message — ${profileOf(n.sender_id)?.display_name || 'Someone'}`, { body: n.content?.slice(0, 100) }); } catch (e) {}
       }
     }
   } else if (eventType === 'UPDATE') {
@@ -107,7 +107,7 @@ export async function startRealtime() {
 
   // Start the presence heartbeat FIRST so the "connected" state resolves even
   // if a realtime subscription below throws (was leaving it at "connecting").
-  try { await beat(); } catch {}
+  try { await beat(); } catch (e) {}
   heartbeatTimer = setInterval(beat, 30000);
 
   try {
@@ -127,7 +127,7 @@ export async function startRealtime() {
   try {
     subPins = sb.channel('db-pins')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'message_pins' }, async () => {
-        try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; notify('pins'); } catch {}
+        try { state.pins = (await rpc('pins_list', { room_id: GENERAL_ROOM })).pins; notify('pins'); } catch (e) {}
       }).subscribe();
   } catch (e) { console.error('[chc] pins channel failed', e); }
 
@@ -153,7 +153,7 @@ export async function startRealtime() {
         if (!n || n.user_id !== state.profile?.id) return;
         bumpUnread();
         if (document.hidden) {
-          try { new Notification('New notification', { body: describeNotification(n) }); } catch {}
+          try { new Notification('New notification', { body: describeNotification(n) }); } catch (e) {}
         }
       })
       .subscribe();
@@ -171,7 +171,7 @@ export async function startRealtime() {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && initialStatus !== 'invisible') {
-          try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now(), status: initialStatus }); } catch {}
+          try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now(), status: initialStatus }); } catch (e) {}
         }
       });
   } catch (e) { console.error('[chc] presence channel failed', e); }
@@ -200,7 +200,7 @@ export async function startRealtime() {
             if (typeof Notification !== 'undefined') {
               new Notification(`DM from ${sender?.display_name || 'someone'}`, { body: m.content?.slice(0, 100) });
             }
-          } catch {}
+          } catch (e) {}
         }
       })
       .subscribe();
@@ -250,13 +250,13 @@ export function stopRealtime() {
   clearTimeout(typingTimer);
   clearTimeout(typingExpireTimer);
   for (const c of [subMessages, subReactions, subPins, subBroadcasts, presenceChannel, typingChannel]) {
-    try { c && sb.removeChannel(c); } catch {}
+    try { c && sb.removeChannel(c); } catch (e) {}
   }
   subMessages = subReactions = subPins = subBroadcasts = presenceChannel = typingChannel = null;
   // Plus the inline db-notifications channel that was created without
   // storing a reference. It's a single use; remove via tracker.
   if (_dbNotificationsRef) {
-    try { sb.removeChannel(_dbNotificationsRef); } catch {}
+    try { sb.removeChannel(_dbNotificationsRef); } catch (e) {}
     _dbNotificationsRef = null;
   }
   rpc('presence_leave', {}).catch(() => {});

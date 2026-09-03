@@ -126,7 +126,7 @@ function describe(n, label, actor) {
 
 async function handleRowClick(n) {
   if (!n.read) {
-    try { await markRead(n.id); } catch {}
+    try { await markRead(n.id); } catch (e) {}
     n.read = true;
     state.unreadNotifs = Math.max(0, (state.unreadNotifs || 1) - 1);
     draw();

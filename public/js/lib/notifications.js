@@ -29,7 +29,7 @@ export async function unreadCount() {
   try {
     const r = await rpc('notifications_unread_count');
     return r?.count || 0;
-  } catch {
+  } catch (e) {
     return 0;
   }
 }
@@ -44,7 +44,7 @@ export async function refreshDmUnread() {
     state.dmInbox = convs;
     notify('inbox');
     return total;
-  } catch {
+  } catch (e) {
     return state.dmUnreadTotal || 0;
   }
 }
@@ -64,7 +64,7 @@ export async function refreshUnread() {
     state.unreadNotifs = await unreadCount();
     notify('notifications');
     return state.unreadNotifs;
-  } catch {
+  } catch (e) {
     return 0;
   }
 }

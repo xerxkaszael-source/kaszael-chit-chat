@@ -17,10 +17,10 @@ const MIN_INTERVAL_MS = 1100; // Nominatim: max 1 req/s
 
 // ---- reverse-geocode cache ----
 function getCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch (e) { return {}; }
 }
 function setCache(c) {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch {}
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch (e) {}
 }
 function cacheKey(lat, lng) {
   // round to 3 decimals (~100m) so nearby requests hit cache
