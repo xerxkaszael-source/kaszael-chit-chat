@@ -1,7 +1,7 @@
 // lib/notifications.js — notification center data layer.
-// Wraps the new RPCs (migration 018): notifications_list, notifications_mark_read,
-// notifications_mark_all_read. Also includes lib/realtime.js hooks for live
-// unread-count badge updates on the bell icon in the shell.
+// Wraps the EXISTING RPCs in the project (from earlier sessions): notifications_list
+// takes `limit_n` (not v_limit), notifications_mark_read takes an array `ids`
+// (not single p_id). notifications_unread_count returns {count: N}.
 import { rpc } from './db.js';
 import { state, notify } from './state.js';
 
@@ -9,39 +9,46 @@ let _listeners = new Set();
 
 export function subscribe(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
 
-export async function load(limit = 50, beforeId = null) {
-  const r = await rpc('notifications_list', { v_limit: limit, v_before_id: beforeId });
-  if (!r?.ok) throw new Error(r?.error || 'load_failed');
+export async function load(limit = 30) {
+  const r = await rpc('notifications_list', { limit_n: Math.min(limit, 50) });
+  if (!r?.ok && !r?.notifications) return r?.notifications || [];
   return r.notifications || [];
 }
 
-export async function markRead(id) {
-  return rpc('notifications_mark_read', { p_id: id });
+export async function markRead(ids) {
+  const arr = Array.isArray(ids) ? ids : [ids];
+  if (!arr.length) return { ok: true };
+  return rpc('notifications_mark_read', { ids: arr });
 }
 
 export async function markAllRead() {
-  return rpc('notifications_mark_all_read');
+  return rpc('notifications_mark_read', { ids: null });
+}
+
+export async function unreadCount() {
+  try {
+    const r = await rpc('notifications_unread_count');
+    return r?.count || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // ---- unread count tracking ----
-// Used by main.js / shell.js to drive the bell badge.
-// Strategy: count rows in the latest page where read=false, plus delta from realtime.
 export function computeUnread(rows) {
   return (rows || []).filter(r => !r.read).length;
 }
 
 export async function refreshUnread() {
   try {
-    const rows = await load(100);
-    state.unreadNotifs = computeUnread(rows);
+    state.unreadNotifs = await unreadCount();
     notify('notifications');
-    return rows;
+    return state.unreadNotifs;
   } catch {
-    return [];
+    return 0;
   }
 }
 
-// Hook called from realtime.js when an INSERT into notifications arrives for self.
 export function bumpUnread() {
   state.unreadNotifs = (state.unreadNotifs || 0) + 1;
   notify('notifications');

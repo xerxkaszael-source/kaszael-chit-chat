@@ -3,7 +3,8 @@
 import { sb, GENERAL_ROOM, rpc } from './db.js';
 import { state, notify, profileOf, insertMessage, patchMessage } from './state.js';
 import { playMessageSound, playMentionSound, playBroadcastSound } from './sound.js';
-import { getStatus, getLastActivityWrite } from './presence.js';
+import { getStatus } from './presence.js';
+import { bumpUnread, refreshUnread } from './notifications.js';
 
 let subMessages = null, subReactions = null, subPins = null, subBroadcasts = null;
 let presenceChannel = null, typingChannel = null;
@@ -50,18 +51,13 @@ function onMessageEvent(payload) {
 }
 
 // ---- presence heartbeat (DB-backed; sweep lives inside RPC) ----
-// Per brief §27: heartbeat carries the user's chosen status + last-activity timestamp.
-// The server-side sweep in migration 018 promotes online→away after 5min idle.
+// Existing RPC signature: presence_heartbeat(session_id text). Doesn't accept
+// status/activity (server force-sets 'online' on every call), so the client-side
+// status override goes through a separate presence_set_status RPC (lib/presence.js).
 async function beat() {
   if (destroyed || !state.session) return;
   try {
-    const status = getStatus() || 'online';
-    const last = getLastActivityWrite() || Date.now();
-    await rpc('presence_heartbeat', {
-      session_id: state.session.access_token.slice(0, 12),
-      v_status: status,
-      v_activity: new Date(last).toISOString()
-    });
+    await rpc('presence_heartbeat', { session_id: state.session.access_token.slice(0, 12) });
     setConnState('online');
   } catch (e) {
     const code = e.chc?.code;
@@ -149,6 +145,20 @@ export async function startRealtime() {
   } catch (e) { console.error('[chc] broadcasts channel failed', e); }
 
   try {
+    // Live unread count + browser notification for new notifications targeting me.
+    sb.channel('db-notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        const n = payload?.new;
+        if (!n || n.user_id !== state.profile?.id) return;
+        bumpUnread();
+        if (document.hidden) {
+          try { new Notification('New notification', { body: describeNotification(n) }); } catch {}
+        }
+      })
+      .subscribe();
+  } catch (e) { console.error('[chc] notifications channel failed', e); }
+
+  try {
     // Skip realtime presence entirely when user is invisible — we still keep DB
     // heartbeat so owner analytics work, but other clients won't see this session
     // in presence sync. Per brief §27: presence flicker prevention.
@@ -189,6 +199,24 @@ export async function refreshReactionsForVisible() {
   for (const r of reactions) {
     if (!state.reactions.has(r.message_id)) state.reactions.set(r.message_id, []);
     state.reactions.get(r.message_id).push(r);
+  }
+}
+
+// ---- notifications: lightweight summary text for browser notification ----
+function describeNotification(n) {
+  switch (n.kind) {
+    case 'friend_request': return 'New friend request';
+    case 'friend_accepted': return 'Friend request accepted';
+    case 'mention': return 'You were mentioned';
+    case 'dm': return 'New direct message';
+    case 'reply': return 'New reply';
+    case 'reaction': return 'New reaction';
+    case 'call': return 'Incoming call';
+    case 'missed_call': return 'Missed call';
+    case 'moderation': return 'Moderation update';
+    case 'broadcast': return n.payload?.title || 'New announcement';
+    case 'security': return 'Security event';
+    default: return 'New notification';
   }
 }
 
