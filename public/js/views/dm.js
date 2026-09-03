@@ -655,9 +655,8 @@ export async function cleanupDmRealtime() {
   visibleMsgIds = [];
   ownMsgIds.clear();
   // After flush completes, refresh the inbox badge so it reflects the
-  // now-decremented unread count.
-  try {
-    const { refreshDmUnread } = await import('../lib/notifications.js');
-    await refreshDmUnread();
-  } catch {}
+  // now-decremented unread count. refreshDmUnread is already imported at the
+  // top of this module — no need for a dynamic import() here (dynamic import
+  // with a relative path was tripping the browser's ESM parser).
+  try { await refreshDmUnread(); } catch {}
 }
