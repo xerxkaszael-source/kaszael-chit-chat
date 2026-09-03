@@ -73,8 +73,27 @@ echo "[deploy] site id: $SITE_ID"
 # 5. Deploy zip
 DEPLOY_OUT=$(curl -s -X POST -H "Authorization: Bearer $NETLIFY" -H "Content-Type: application/zip" \
   --data-binary "@$ZIP" "https://api.netlify.com/api/v1/sites/$SITE_ID/deploys")
-DEPLOY_ID=$(echo "$DEPLOY_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id','?'))")
-DEPLOY_URL=$(echo "$DEPLOY_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ssl_url', d.get('url','?')))")
+# Robust parse — fall back to raw output if response isn't a deploy object.
+DEPLOY_ID=$(echo "$DEPLOY_OUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    if 'error' in d:
+        sys.stderr.write('NETLIFY ERROR: ' + d['error'] + '\n')
+        sys.exit(2)
+    print(d.get('id', '?'))
+except Exception as e:
+    sys.stderr.write('PARSE ERROR: ' + str(e) + ' — raw: ' + sys.stdin.read()[:200] + '\n')
+    sys.exit(1)
+" 2>&1) || { echo "[deploy] FAILED: $DEPLOY_ID" >&2; echo "[deploy] raw response: $DEPLOY_OUT" >&2; exit 1; }
+DEPLOY_URL=$(echo "$DEPLOY_OUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('ssl_url', d.get('url','?')))
+except Exception:
+    print('?')
+")
 echo "[deploy] deployed: $DEPLOY_ID"
 echo "[deploy] url: $DEPLOY_URL"
 echo "$DEPLOY_ID" > "$PROJECT_ROOT/.last-deploy-id"
