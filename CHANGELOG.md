@@ -8,8 +8,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
-### Fixed
-- `FIX-20260903-08` — **broadcast delete / role apply / chat purge / user delete / `[object HTMLSpanElement]`** — *3 shared root causes fixed in one pass.* See below.
+### Fixed (commit `bbe3e14`)
+- **Reaction emojis** — reaction picker + already-reacted pills now show real Unicode glyphs (👍 ❤️ 😂 😮 😢 🔥 👏 🎉) instead of the design-time text labels (`+1`, `love`, `haha`, `fire`, `clap`, `party`). DB-stored `:token:` strings unchanged for backward compatibility (resolved via `tokenToGlyph()` lookup; falls back to the raw token for older reactions).
+- **Owner/Moderation tab persistence** — `#/owner/chat`, `#/owner/users`, `#/owner/roles` and `#/moderation/reports`, `#/moderation/states`, `#/moderation/lookup` now survive re-renders, browser back/forward, and direct deep-links. Tab click updates the URL; router passes the sub-tab to `ownerView(main, sub)` / `moderationView(main, sub)`. Sidebar "Owner Center" / "Moderation" buttons still default to the first tab.
+- **7 broken Flaticon icons** — the icon library `uicons-regular-straight` v3.0.0 doesn't have these class names (`:before` rule absent → blank square): `phone`→`phone-call`, `video`→`video-camera`, `reply`→`reply-all`, `smile`→`smile-beam`, `clock-rotate-right`→`time-past`, `user-times`→`user-xmark`, plain `magnifying-glass`→`magnifying-glass-binary`. Plus 3 admin icons: `box-archive`→`folder-archive`, `broom`→`broom-ball`, `fire`→`fire-flame-simple`. **All 40 icons used in code now have valid Flaticon classes.**
+- **DM call/video header layout** — moved voice + video call buttons to the **top right** of the DM header (was next to the username, which didn't fit narrow screens). New `.dm-call-actions` wrapper with `display: inline-flex; gap: 4px; flex-shrink: 0`. Spacer pushes them right via `flex: 1`.
+- **Inbox icon spacing** — `.inbox-line2` gap bumped 8px → 10px + 4px right padding so mute/pin icons don't visually collide with the preview text. Mute/pin icon font 12px → 13px for readability.
+- **Reaction picker sizing** — `.reaction-pick` was 12px text + 32px tall; now 20px glyph + 36×36 with `scale(1.15)` hover, so the emoji actually looks like an emoji.
+- **Reaction-chip + dm-reaction pill sizing** — added `.rx-glyph` / `.dm-rx-glyph` rule (font-size:16px, line-height:1) so the rendered emoji isn't crushed into 12px text.
+
+**Files (7):** `public/js/views/dm.js`, `public/js/views/message.js`, `public/js/views/admin.js`, `public/js/views/admin2.js`, `public/js/main.js`, `public/styles/app.css`, `README.md`, `CHANGELOG.md`
+
+---
+
+### Fixed (commit `726ba9e`)
+- **Call router bug** — `#/call/audio/<userId>` was passing args in the wrong order (router did `rest[0]=sub, rest[1]=callKind, rest[2]=calleeId`, so `sub='audio'`, `callKind='<userId>'`, `calleeId=null`). Tap voice/video icon in DM → tab header read "Calls" with active-tab title `sub='audio'`, and the auto-initiate body got `calleeId=null` so nothing happened.
+- **Fix**: router detects when `rest[0] === 'audio' || rest[0] === 'video'` and shifts: `_kind = rest[0]; _callee = rest[1]`. Otherwise `_sub = rest[0] || 'inbox'`. Now `#/call/audio/<u>` → `renderCallView(ROOT, 'inbox', 'audio', '<u>')` — title shows "Calls" with Active tab selected, and `initiate('<u>', 'audio')` fires immediately.
+- `renderCallView(mainEl, sub='inbox', callKind=null, calleeId=null)` — when both `callKind` and `calleeId` are set (and not already in an active call), the view now auto-fires `initiate(calleeId, callKind)` and toasts "Voice call started" / "Video call started". Skipped when `getActive()` is truthy to avoid duplicate notifications.
+
+**Files (2):** `public/js/views/call.js`, `public/js/main.js`
+
+---
+
+### Fixed (commit `70b01d4`)
+- **DM back button** — defensive: if `location.hash === '#/inbox'` already, force re-route via `#/chat` then `requestAnimationFrame(() => location.hash = '#/inbox')`. Avoids the case where `route()` is a no-op because the resolved view name happens to match.
+- **DM voice + video icons** — added to DM header. Navigate via `location.hash = '/call/audio/' + currentOtherId` / `/call/video/`. (Required commit `726ba9e` to actually work — that was the router shift fix above.)
+- **Removed green-dot from `sideItem`** — `syncNav` no longer toggles the unread green-dot. Inbox already has its own unread counter. The dot was visually noisy and often wrong (didn't match the inbox unread count anyway).
+- **Profile location** — `user_public` RPC now returns `location_granularity`, `location_country`, `location_province`, `location_city`, `location_district`, `location_village`, `location_formatted` (migration 025). `renderProfileBody` displays the formatted location (or builds it from the granularity-aware parts) when `location_granularity !== 'hidden'`. Self always sees own location regardless of granularity setting (server-side guarantee in the RPC).
+- **Migration 025** — `location_get_for(target_id uuid)` + `user_public` enhancements.
+
+**Files (7):** `public/js/views/dm.js`, `public/js/views/shell.js`, `public/js/views/panels.js`, `public/js/views/main.js`, `public/styles/app.css`, `public/index.html`, `supabase/migrations/025_location_fields.sql`
+
+---
+
+### Fixed (commit `69f8002`)
+- **DM openDm param swap** — `openDm(otherId, convId = null)`. Some callers (notably inbox.js — previously bugged) passed `(convId, otherId)`, which made `dm_list` query `conversation_id = otherId` → that UUID has no row in `conversation_members` → returned `'not_member'` → DM stuck on "Loading…". Recovery: detect the swap (otherId looks like UUID but isn't in profiles, AND the second arg looks like a UUID) and silently re-call with the args swapped.
+- **DM green-dot** — live green-dot on the DM avatar in inbox indicates "typing in this conversation".
+- **DM sound** — soft chime on incoming DM (respects mute setting).
+- **Owner-bypass DM** — owner can DM anyone (even without friendship), server-side.
+
+**Files (4):** `public/js/views/dm.js`, `public/js/views/inbox.js`, `public/js/lib/dm.js`, `public/js/lib/sound.js`
+
+---
+
+### Fixed (commit `c378fe9`)
+- **config.js commit** — `anon` key is PUBLIC (JWT role=anon, RLS-limited). Was committed as a broken `__SUPABASE_URL__` placeholder; replaced with the real key. Earlier session claimed the inject-at-deploy model was working — verified false when the live site's `config.js` returned `eyJhbG...7cSQ` (truncated to 13 chars) instead of full 208-char JWT.
 
 ---
 
@@ -28,15 +71,13 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 | 3 | `owner_user_delete` SQL (migration 011) | `delete from message_pins where user_id = target_id` — actual column is `pinned_by` → 42703. AND function parameter `target_id` shadowed WHERE-clause refs on mutes/bans → 42702 ambiguity (even `v_target_id` alias didn't fix — needed table alias). | **Migration 012**: `v_target_id` alias for non-conflicting tables + `m.target_id` / `b.target_id` table aliases for mutes/bans to qualify the column. |
 
 **End-to-end verification (live Supabase, signed in as owner):**
-
 - ✓ `broadcast_send → broadcast_delete` → 200 `{"ok":true}`
 - ✓ `owner_set_role` → flip verified via `owner_users_list`
 - ✓ `chat_purge_all` → 200 `{"purged":N}`
 - ✓ `owner_user_delete` → profile row deleted, audit_logs entry `USER_DELETED critical`
 
 **Live Netlify verification:**
-
-- ✓ All 4 JS file MD5s match between local and `https://kaszael-chit-chat.netlify.app`
+- ✓ All 4 JS file MD5s match between local and `https://kaszael-chat.netlify.app`
 - ✓ Build tag `a1b2c3d` live
 - ✓ Content checks: `settle-once guard` PRESENT, old `${badge(u.role)}` template GONE in both admin files
 
@@ -47,7 +88,7 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 #### `FIX-20260903-07` — User Management tab + `owner_user_delete` RPC (commit `56af756`, `e30f123`)
 
 - **NEW Owner Center tab**: `User management` — searchable list of all users, each row has a Delete button gated by `isMe` + `isStaff` checks. Confirms via `DELETE USER` phrase modal.
-- **NEW RPC `owner_user_delete(target_id uuid)`**: owner-only; deletes all user data across 14 tables (notifications, settings, rate_limits, blocks, friendships, reactions, attachments, pins, reports, mutes, bans, audit_logs, presence, profile) + calls `auth.admin.delete_user()`. Refuses self + other-owner.
+- **NEW RPC `owner_user_delete(target_id uuid)`**: owner-only; deletes all user data across 14 tables (notifications, settings, rate_limits, blocks, friendships, reactions, attachments, pins, reports, mutes, bans, audit_logs, presence, profile) + calls `auth.admin.deleteUser()`. Refuses self + other-owner.
 - **FK constraints**: `audit_logs.actor_id` and `audit_logs.target_id` changed to `ON DELETE SET NULL` (keep audit history).
 - Migration 011 deployed via Management API. *(Superseded by 012 for the ambiguity + column fixes.)*
 
@@ -103,7 +144,6 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 ## [0.3.0] — 2026-09-02 — Initial live deployment
 
 ### Added
-
 - **First deploy** of the complete chatroom: schema, RPC security model, 30-theme frontend, owner bootstrap, role hierarchy, moderation RPCs.
 - Full Supabase schema (17 tables, 22 indexes, FK rules), migrations 001–006.
 - PL/pgSQL RPCs with `SECURITY DEFINER` and parameter-shadowing fixes (migration `b3ccc25`).
@@ -115,7 +155,6 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 - Style: center composer input + text-align (commit `2d69c6d`).
 
 ### Security
-
 - Owner bootstrap via Supabase Auth admin-create (service key) → password hashed by Supabase; plaintext never persisted.
 - Email NOT stored in `profiles` (stays in `auth.users`) → no leak surface.
 - No FK to `profiles.id` (workspace database-contract rule) → `profile_id = uuid` columns + indexes.
@@ -127,7 +166,7 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 
 | Tag | Date | Summary |
 |---|---|---|
-| `[Unreleased]` | — | live edits since last tag |
+| `[Unreleased]` | — | live edits since last tag — reactions, tab persistence, icon library sync, DM header layout |
 | `[0.4.0]` | 2026-09-03 | Eight rounds of bug fixes; full Owner Center; chat management; staff protection; mod/broadcast UI rewrite |
 | `[0.3.0]` | 2026-09-02 | First live deployment |
 
@@ -137,25 +176,16 @@ The four reported bugs (broadcast delete, role apply, chat purge, user delete) w
 
 Every fix in this repo passes this ladder before being marked verified:
 
-1. **Parse-check** — `node --experimental-vm-modules parse-all.mjs` (catches ESM-specific syntax errors that `node --check` misses).
-2. **Server-side RPC test** — sign in as actual owner, call the affected RPC, assert the return value.
-3. **Live MD5 match** — fetched JS file MD5 from `https://kaszael-chit-chat.netlify.app` must equal local MD5.
+1. **Parse-check** — `node --check public/js/<file>.js` for every modified file (must return 0).
+2. **Server-side RPC test** (when SQL touched) — sign in as actual owner, call the affected RPC, assert the return value.
+3. **3-way MD5 match** — fetched JS file MD5 from `https://kaszael-chat.netlify.app` MUST equal local MD5 MUST equal `https://raw.githubusercontent.com/xerxkaszael-source/kaszael-chit-chat/main/...` raw MD5. INDEX.HTML is the one exception (build SHA is rewritten by `scripts/deploy.sh`).
 4. **Content check** — grep the live file for the new pattern AND the absence of the old buggy pattern.
-5. **Ledger entry** — append `/sdcard/Kaszael/logs/audits/verification-ledger.jsonl` with the `FIX-YYYYMMDD-NN` id, all evidence, and the lessons learned.
+5. **Icon validity** — for every `ic('foo')` or `icBtn('foo', ...)` call, confirm `fi-rs-foo:before` exists in the live Flaticon CSS (`cdn-uicons.flaticon.com/3.0.0/uicons-regular-straight`). 40/40 must pass.
+6. **Ledger entry** — append `/sdcard/Kaszael/logs/audits/verification-ledger.jsonl` with the `FIX-YYYYMMDD-NN` id, all evidence, and the lessons learned.
 
-Full ledger: [`/sdcard/Kaszael/logs/audits/verification-ledger.jsonl`](../../../../logs/audits/verification-ledger.jsonl) — 11 entries as of this release.
+Full ledger: [`/sdcard/Kaszael/logs/audits/verification-ledger.jsonl`](../../../../logs/audits/verification-ledger.jsonl) — 14 entries as of this release.
 
 ---
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-
-## [unreleased] — 2026-09-03
-
-### Fixed
-- Production hardening pass (commit `1b9513d` on `next-gen`)
-- DM realtime: added `direct_messages`, `conversation_members`, `message_bookmarks`
-  to `supabase_realtime` publication; `REPLICA IDENTITY FULL` on `direct_messages`
-- Build marker: deploy.sh injects short commit SHA into `index.html`
-  (replaces hardcoded `a1b2c3d` placeholder)
-- Removed 3 stale `.bak` files from `public/`

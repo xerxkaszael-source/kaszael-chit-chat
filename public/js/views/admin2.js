@@ -25,7 +25,7 @@ export async function adminView(main) {
 }
 
 // ================= OWNER CENTER =================
-export async function ownerView(main) {
+export async function ownerView(main, sub = null) {
   main.append(el('h2', {}, 'Owner Control Center'));
   const stats = el('div', { class: 'stat-grid' });
   main.append(stats);
@@ -41,22 +41,29 @@ export async function ownerView(main) {
       card('Broadcasts', s.broadcasts_total), card('Audit events', s.audit_total));
   } catch (e) { stats.append(el('p', { class: 'muted' }, e.chc?.text || 'Stats failed.')); }
 
-  // tabs (role mgmt + chat mgmt + user mgmt)
+  // tabs (role mgmt + chat mgmt + user mgmt). Active tab is URL-persisted so it
+  // survives re-renders, browser back/forward, and deep-links (e.g. /owner/chat).
   const content = el('div', { class: 'owner-content' });
   main.append(content);
+  const validTabs = ['roles', 'chat', 'users'];
+  let active = validTabs.includes(sub) ? sub : 'roles';
   const tabs = el('div', { style: 'display:flex;gap:8px;margin:14px 0' },
     sectionTab('Role management', 'roles', setActive),
     sectionTab('Chat management', 'chat', setActive),
     sectionTab('User management', 'users', setActive));
   main.insertBefore(tabs, content);
-  function setActive(name) {
+  function setActive(name, pushHash = true) {
+    active = name;
     [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     content.innerHTML = '';
     if (name === 'roles') loadRoleMgmt(content);
     else if (name === 'chat') loadChatMgmt(content);
     else if (name === 'users') loadUserMgmt(content);
+    if (pushHash && location.hash !== '#/owner/' + name) {
+      location.hash = '/owner/' + name;
+    }
   }
-  setActive('roles');
+  setActive(active, false);
 }
 
 function sectionTab(label, name, setActive) {

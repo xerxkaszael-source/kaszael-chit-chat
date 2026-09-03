@@ -37,22 +37,28 @@ let ownMsgIds = new Set();     // for read-receipt subscription filter
 let pendingReadMarks = new Set(); // debounced read-mark queue (legacy in-file state; primary queue lives in lib/read-receipts.js)
 let readMarkTimer = null;
 
-// Short text reaction tokens (Flaticon UIcons policy: no emoji as UI icons).
-// Token choices mirror common Slack/Discord quick reactions for muscle memory.
+// Quick-reaction emoji set. The `token` (`:+1:`, `:heart:`, etc.) is what gets
+// stored in the DB so existing rows still display correctly; `glyph` is the
+// real Unicode emoji shown in the picker and on already-reacted pills so the
+// UI feels like Slack/Discord instead of a wall of "love"/"fire"/"+1" labels.
 const EMOJI_OPTIONS = [
-  { label: '+1', token: ':+1:' },
-  { label: 'love', token: ':heart:' },
-  { label: 'haha', token: ':joy:' },
-  { label: 'wow', token: ':open:' },
-  { label: 'sad', token: ':cry:' },
-  { label: 'fire', token: ':fire:' },
-  { label: 'party', token: ':tada:' },
-  { label: 'clap', token: ':clap:' }
+  { glyph: '👍', label: '+1',    token: ':+1:'    },
+  { glyph: '❤️', label: 'love',  token: ':heart:'  },
+  { glyph: '😂', label: 'haha',  token: ':joy:'    },
+  { glyph: '😮', label: 'wow',   token: ':open:'   },
+  { glyph: '😢', label: 'sad',   token: ':cry:'    },
+  { glyph: '🔥', label: 'fire',  token: ':fire:'   },
+  { glyph: '👏', label: 'clap',  token: ':clap:'   },
+  { glyph: '🎉', label: 'party', token: ':tada:'   }
 ];
 
-// Map token -> label for rendering. Falls back to the token itself.
+// Map a stored token back to its glyph for rendering. Tokens that came in
+// from older rows and aren't in the table fall back to the raw token string
+// so users still see SOMETHING (better than blank).
+const TOKEN_GLYPH = Object.fromEntries(EMOJI_OPTIONS.map(o => [o.token, o.glyph]));
 const TOKEN_LABEL = Object.fromEntries(EMOJI_OPTIONS.map(o => [o.token, o.label]));
 function tokenToLabel(token) { return TOKEN_LABEL[token] || token; }
+function tokenToGlyph(token) { return TOKEN_GLYPH[token] || token; }
 
 export async function openDm(otherId, convId = null) {
   // Defensive parameter swap recovery.
@@ -240,7 +246,7 @@ function reactionRow(msgId) {
       title: tokenToLabel(r.emoji),
       'aria-label': `${tokenToLabel(r.emoji)}, ${r.count}`,
       onclick: () => doToggleReaction(msgId, r.emoji)
-    }, el('span', { class: 'dm-rx-label' }, tokenToLabel(r.emoji)), el('span', { class: 'dm-rx-count' }, String(r.count)))));
+    }, el('span', { class: 'dm-rx-glyph' }, tokenToGlyph(r.emoji)), el('span', { class: 'dm-rx-count' }, String(r.count)))));
 }
 
 function messageActions(m, mine) {
@@ -257,8 +263,9 @@ function messageActions(m, mine) {
 }
 
 function showReactionPicker(ev, msgId) {
-  // popover with text-label quick reactions (Flaticon UIcons policy: no emoji icons).
-  // Stored as :token: in DB for backward compat with chat.js reaction columns.
+  // popover of quick-reaction emojis (real glyphs, not labels). Each button
+  // stores its `:token:` in the DB so existing reactions on older messages
+  // still render via tokenToGlyph() below.
   const pop = el('div', { class: 'reaction-picker' });
   for (const e of EMOJI_OPTIONS) {
     pop.append(el('button', {
@@ -266,7 +273,7 @@ function showReactionPicker(ev, msgId) {
       title: e.label,
       'aria-label': `React with ${e.label}`,
       onclick: () => { pop.remove(); doToggleReaction(msgId, e.token); }
-    }, e.label));
+    }, e.glyph));
   }
   pop.style.position = 'absolute';
   pop.style.left = (ev.clientX - 110) + 'px';

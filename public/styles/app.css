@@ -190,13 +190,14 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .msg-row.own .reactions-row { justify-content: flex-end; }
 .reaction-chip {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 9px; border-radius: 99px; font-size: .82rem;
+  padding: 3px 10px; border-radius: 99px; font-size: .85rem;
   background: var(--bg-2); border: 1px solid var(--line-1);
   transition: border-color var(--fast), background var(--fast);
 }
 .reaction-chip:hover { border-color: var(--accent); }
 .reaction-chip.mine { background: var(--accent-soft); border-color: var(--accent); }
-.reaction-chip .rc-count { font-size: .72rem; font-weight: 700; color: var(--text-2); }
+.reaction-chip .rx-glyph { font-size: 16px; line-height: 1; }
+.reaction-chip .rc-count { font-size: .78rem; font-weight: 700; color: var(--text-2); }
 
 /* attachments in bubble */
 .msg-img { max-width: 320px; max-height: 280px; border-radius: var(--radius-m); display: block; cursor: zoom-in; object-fit: cover; background: var(--bg-3); }
@@ -536,6 +537,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .inbox-line1, .inbox-line2 {
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
+.inbox-line2 { gap: 10px; padding-right: 4px; }  /* extra breathing room around mute/pin icons */
 .inbox-name { font-weight: 600; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inbox-row.unun .inbox-name { color: var(--accent); }
 .inbox-time { font-size: 12px; color: var(--text-3); margin-left: auto; flex-shrink: 0; }
@@ -547,7 +549,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
   font-size: 11px; font-weight: 600;
   padding: 1px 7px; border-radius: 10px; min-width: 18px; text-align: center;
 }
-.inbox-mute-icon, .inbox-pin-icon { color: var(--text-3); font-size: 12px; }
+.inbox-mute-icon, .inbox-pin-icon { color: var(--text-3); font-size: 13px; opacity: 0.85; }
 .inbox-pin-icon { color: var(--warning); }
 
 /* ---- Empty state (shared) ---- */
@@ -602,15 +604,15 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .dm-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .dm-reaction {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; background: var(--bg-2); color: var(--text-2);
+  padding: 3px 9px; background: var(--bg-2); color: var(--text-2);
   border: 1px solid var(--line-1); border-radius: 12px;
-  font-size: 12px; cursor: pointer;
+  font-size: 13px; cursor: pointer;
   transition: background .15s, border-color .15s;
 }
 .dm-reaction:hover { background: var(--bg-3); border-color: var(--line-2); }
 .dm-reaction.mine { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.dm-rx-label { font-weight: 600; }
-.dm-rx-count { font-weight: 400; opacity: .8; }
+.dm-rx-glyph { font-size: 16px; line-height: 1; }
+.dm-rx-count { font-weight: 600; opacity: .85; }
 
 .dm-actions { display: flex; gap: 4px; align-items: center; opacity: 0; transition: opacity .15s; }
 .dm-msg:hover .dm-actions, .dm-msg:focus-within .dm-actions { opacity: 1; }
@@ -630,12 +632,14 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
   z-index: 100;
 }
 .reaction-pick {
-  width: 34px; height: 32px;
+  width: 36px; height: 36px;
   background: transparent; color: var(--text-1); border: 0; border-radius: 6px;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: background .12s;
+  font-size: 20px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, transform .1s;
 }
-.reaction-pick:hover { background: var(--accent-soft); color: var(--accent); }
+.reaction-pick:hover { background: var(--accent-soft); transform: scale(1.15); }
+.reaction-pick:active { transform: scale(0.95); }
 
 /* composer */
 .dm-composer {

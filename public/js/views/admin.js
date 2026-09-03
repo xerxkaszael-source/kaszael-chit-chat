@@ -8,7 +8,7 @@ import { adminView, ownerView, auditView, systemView } from './admin2.js';
 
 const sections = [];
 
-export function renderAdmin(root, view) {
+export function renderAdmin(root, view, sub = null) {
   if (state.isGuest) { location.hash = '/chat'; return; }
   if (['owner', 'system', 'audit'].includes(view) && !isOwner()) { location.hash = '/chat'; return; }
   if (view === 'admin' && !canAdmin()) { location.hash = '/chat'; return; }
@@ -25,7 +25,7 @@ export function renderAdmin(root, view) {
       el('div', { class: 'topbar-spacer' }),
       el('span', { class: 'muted' }, `${me().display_name} · ${me().role}`)),
     el('div', { class: 'admin-shell' }, side, main)));
-  routeAdmin(view, main);
+  routeAdmin(view, main, sub);
 }
 
 function navItems(active) {
@@ -39,39 +39,48 @@ function navItems(active) {
   return items;
 }
 
-function routeAdmin(view, main) {
+function routeAdmin(view, main, sub = null) {
   main.innerHTML = '';
-  if (view === 'moderation') moderationView(main);
+  if (view === 'moderation') moderationView(main, sub);
   else if (view === 'broadcast') broadcastView(main);
   else if (view === 'admin') adminView(main);
-  else if (view === 'owner') ownerView(main);
+  else if (view === 'owner') ownerView(main, sub);
   else if (view === 'audit') auditView(main);
   else if (view === 'system') systemView(main);
 }
 
 // ================= MODERATION =================
-async function moderationView(main) {
+async function moderationView(main, sub = null) {
   main.append(el('h2', {}, 'Moderation'));
   // Single content container — every tab swaps its content in place to prevent
   // the "stacked duplicate headers" bug where each click appended a new holder.
   const content = el('div', { class: 'mod-content' });
   main.append(content);
 
-  let active = 'reports';
-  function setActive(name) {
+  // Allowed sub-tabs; anything outside this set falls back to 'reports'.
+  const validTabs = ['reports', 'states', 'lookup'];
+  let active = validTabs.includes(sub) ? sub : 'reports';
+
+  function setActive(name, pushHash = true) {
     active = name;
     [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     content.innerHTML = '';
     if (name === 'reports') reportsTab(content);
     else if (name === 'states') statesTab(content);
     else if (name === 'lookup') lookupTab(content);
+    // Mirror active tab into the URL so the tab survives re-renders, browser
+    // back/forward, and deep-links. No pushHash when called from initial render
+    // to avoid a spurious hashchange that loops back through the router.
+    if (pushHash && location.hash !== '#/moderation/' + name) {
+      location.hash = '/moderation/' + name;
+    }
   }
   const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px' },
     tabBtn('Reports', 'reports', setActive),
     tabBtn('Active mutes & bans', 'states', setActive),
     tabBtn('User lookup', 'lookup', setActive));
   main.insertBefore(tabs, content);
-  setActive('reports');
+  setActive(active, false);
 }
 
 function tabBtn(label, name, setActive) {

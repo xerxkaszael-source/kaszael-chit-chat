@@ -6,16 +6,21 @@ import { rpc, storagePublicUrl } from '../lib/db.js';
 import { modal } from '../lib/util.js';
 import { openProfile } from './panels.js';
 
+// Quick-reaction emoji set. `token` is the DB-stored value (kept for backward
+// compat); `glyph` is the real Unicode emoji shown in the picker and on
+// already-reacted pills.
 const REACTION_SET = [
-  { icon: 'thumbs-up', label: '+1', token: ':+1:' },
-  { icon: 'heart',    label: 'love', token: ':heart:' },
-  { icon: 'face-smile-beam', label: 'haha', token: ':joy:' },
-  { icon: 'face-surprise',   label: 'wow',  token: ':open:' },
-  { icon: 'face-frown',      label: 'sad',  token: ':cry:' },
-  { icon: 'fire',     label: 'fire',  token: ':fire:' },
-  { icon: 'hands-clapping', label: 'clap', token: ':clap:' },
-  { icon: 'party-horn', label: 'party', token: ':tada:' }
+  { glyph: '👍', label: '+1',    token: ':+1:'    },
+  { glyph: '❤️', label: 'love',  token: ':heart:'  },
+  { glyph: '😂', label: 'haha',  token: ':joy:'    },
+  { glyph: '😮', label: 'wow',   token: ':open:'   },
+  { glyph: '😢', label: 'sad',   token: ':cry:'    },
+  { glyph: '🔥', label: 'fire',  token: ':fire:'   },
+  { glyph: '👏', label: 'clap',  token: ':clap:'   },
+  { glyph: '🎉', label: 'party', token: ':tada:'   }
 ];
+const TOKEN_GLYPH = Object.fromEntries(REACTION_SET.map(r => [r.token, r.glyph]));
+function reactionGlyph(token) { return TOKEN_GLYPH[token] || token; }
 
 export function renderMessageRow(msg) {
   const own = msg.sender_id === me()?.id;
@@ -108,7 +113,7 @@ function renderReactions(msg) {
       class: `reaction-chip${mine ? ' mine' : ''}`,
       title: users.map(u => profileOf(u)?.display_name || '?').join(', '),
       onclick: () => toggleReaction(msg.id, emoji)
-    }, el('span', {}, emoji), el('span', { class: 'rc-count' }, String(users.length))));
+    }, el('span', { class: 'rx-glyph' }, reactionGlyph(emoji)), el('span', { class: 'rc-count' }, String(users.length))));
   }
   return wrap;
 }
@@ -154,7 +159,7 @@ function openReactionPicker(msg) {
         title: r.label,
         'aria-label': `react with ${r.label}`,
         onclick: async () => { m.close(); await toggleReaction(msg.id, r.token); }
-      }, r.label)))
+      }, r.glyph)))
   });
 }
 

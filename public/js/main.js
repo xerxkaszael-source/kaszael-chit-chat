@@ -107,7 +107,8 @@ function route() {
     if (!state.profile || state.isGuest || !(isOwner() || ['admin', 'moderation', 'broadcast'].includes(view) && state.profile)) {
       navigate('/chat'); return;
     }
-    renderAdmin(ROOT, view);
+    // rest[0] is the active sub-tab (e.g. /owner/chat keeps "Chat management" tab active).
+    renderAdmin(ROOT, view, rest[0] || null);
     return;
   }
   if (view === 'dm' && rest[0]) {
