@@ -8,7 +8,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
-### Fixed (commit `cd89be6`) — Incoming call + floating bubble only worked on `/call/*`
+### Fixed (commit `92cea31`) — Accept bubble disappears + iPhone Chrome misses call + permission UX
+Three layered call bugs fixed end-to-end per spec §1-50.
+
+**BUG #1 — Accept bubble disappears (root cause confirmed via state-machine audit):**
+The legacy `doAccept()` cleared `_incomingCall` and removed the modal from the DOM **before** awaiting `lib/call.accept()`. Then `accept()` called `acquireMedia()` which blocks on the permission prompt; if media failed, the catch handler called `decline('media_failed')` → `teardown()` → `activeCall = null` → no UI ever shown.
+
+**BUG #2 — iPhone Chrome / iOS Safari misses incoming call (root cause: WebSocket suspension):**
+iOS WebKit (Safari AND Chrome — both use WebKit on iOS) aggressively suspends WebSocket connections when the page is backgrounded, the device locks, or iOS puts the tab in a frozen state. On return, the socket may be CLOSED without an explicit error event — every incoming-call realtime event is dropped until the user manually reloads.
+
+**BUG #3 — Microphone/camera permission prompt not appearing:**
+The old `accept()` had no secure-context check, no per-error-type UI mapping, and silently swallowed getUserMedia failures.
+
+**Fix (state machine + atomic transitions + iOS reconnect + permission UX):**
+
+1. **16-state call state machine** in `lib/call.js` — `idle`, `outgoing_calling`, `outgoing_ringing`, `incoming_ringing`, `accepting`, `connecting`, `connected`, `reconnecting`, `declining`, `declined`, `cancelled`, `busy`, `timeout`, `failed`, `ending`, `ended`. `setCallState()` validates every transition (no-op on invalid).
+
+2. **Atomic accept path** — `incoming_ringing → accepting` (UI updates) → secure-context check → mediaDevices check → `acquireMedia()` → `connecting` → `call_accept` RPC → `drainPendingSignaling()`. ActiveCall NEVER null mid-transition. On failure: state → `failed` with `_permissionError` set; UI shows red banner with Try-Again.
+
+3. **Incoming modal stays visible during accept** — `handleCallEvent` only clears the modal when state has moved PAST `incoming_ringing`/`accepting`. Until then a pulsing "Requesting permission…" pill is shown. `doAccept` disables the button + shows "Accepting…" (idempotent — no double-click race).
+
+4. **iOS lifecycle reconnect** — `visibilitychange → visible`, `pageshow (bfcache)`, `online`, `offline` handlers in `call-manager.js`. Each triggers `handleRecovery()` which re-verifies auth session (`sb.auth.getSession()`) + re-subscribes the existing channel (supabase-js reuses the socket, no duplicates) + calls `pollActive()` to pick up any missed server row. 250ms debounce + `_recoveryInFlight` guard coalesces rapid iOS events.
+
+5. **Per-call-id caller timeout** (`_callerTimeoutTimerByCallId` Map) — old single-timer design leaked when calls overlapped; each timer now guards on `call_id` + state.
+
+6. **Offer-arrives-before-accept race fix** — signaling messages received during `incoming_ringing`/`accepting` are queued in `_pendingSignalingByCallId`, drained after accept completes the state transition.
+
+7. **getUserMedia error mapping** — `NotAllowedError` → permission-denied message (voice vs video tailored), `NotFoundError` → no microphone/camera detected, `NotReadableError` → in use by another app, `OverconstrainedError` → camera doesn't support settings, `SecurityError` → not HTTPS, `NotSupportedError` → browser doesn't support, `AbortError` → interrupted. Per-kind wording (voice = mic only, video = cam + mic).
+
+8. **iOS-safe `<video>` tags** — `autoplay + playsinline + muted` (local tile always muted; remote also muted to satisfy iOS autoplay rules). `env(safe-area-inset-bottom/right)` honored via `@supports` query so the bubble clears the iOS home indicator + notch.
+
+9. **Permission diagnostic panel** — `window.__CHC_PERM_DEBUG__ = true` (default off) shows `isSecureContext`, `mediaDevices` availability, microphone/camera `Permissions.query()` state, UA, current call state, last permission error. Toggleable at runtime via `window.chcCallDebug.permEnable() / permDisable()`.
+
+**Verification (audit_live):**
+- `node --check` passes on every file in `public/js/`.
+- 0 unresolved imports, 0 `new X?.(` traps, 1 declaration each of `TERMINAL_STATES`/`ALLOWED`/`isTerminal`/`canTransition`/`setCallState`.
+- `handleIncoming` called from exactly one production path (call-manager.js line 162).
+- Realtime infrastructure smoke test PASSES (service-role → INSERT fires; anon-key path documented as failing per earlier test — fixed in browser via supabase-js auto `setAuth(session.access_token)`).
+- No DB changes needed.
+
+**Deploy gate:** pushed to GitHub (`92cea31`). NOT deployed to Netlify — account credit limit hit per M16 (every deploy returns `Account credit usage exceeded`). User must:
+1. Add credits via app.netlify.com → Billing, OR
+2. Disable envelope-mode blocker per `.netlify/state.json`, OR
+3. Deploy to GitHub Pages / Cloudflare Pages / Vercel.
+
+Until the new code is on the CDN, the browser keeps loading the old `0346cbb` build — the bug will not be fixed for the user. After deploy, verify with the diagnostic overlays:
+- Bottom-left `[CALL RT]` overlay shows `uid`, `channel: call-incoming-global`, `status: SUBSCRIBED ✓`
+- `window.__CHC_PERM_DEBUG__ = true` toggles the `[PERM]` panel bottom-right
+- `window.chcCallDebug.state()` returns the current call state machine snapshot
+- `window.chcCallDebug.accept()` triggers a programmatic accept (for two-user automated tests)
+
+**NOT VERIFIED:** real two-session browser test (cannot open two browsers from Termux). The user MUST run the iPhone Chrome → desktop and desktop → iPhone Chrome acceptance test from spec §38 once the code is live.
+
+---
 User A clicks Voice/Video Call → `call_initiate` inserts the row, the realtime event fires — but User B never received the incoming-call UI unless they happened to be on `/call/inbox` or `/call/history`. On every other route (`/chat`, `/dm/<uid>`, `/owner/<tab>`, `/notifications`, `/friends`, `/location`) there was no listener, so the floating incoming-call modal never appeared. Even on `/call`, the legacy view kept its own local `incoming` variable and called `accept()` from `lib/call.js` without ever going through `handleIncoming()`, so the WebRTC hand-off was a no-op (`activeCall` stayed `null` for the callee path).
 
 **Root causes (2, layered):**
