@@ -693,6 +693,50 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 }
 
 /* ============================================================
+   Location settings view (Phase 6)
+   ============================================================ */
+.loc-settings { display: flex; flex-direction: column; height: 100%; }
+.loc-settings .view-sub { color: var(--text-3, #888); font-size: 13px; margin-top: 4px; }
+.loc-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.loc-status {
+  display: flex; align-items: center; gap: 12px; padding: 14px;
+  border-radius: var(--radius-m, 10px);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+  border-left: 3px solid var(--text-3, #888);
+}
+.loc-status.on { border-left-color: var(--success, #2ecc71); }
+.loc-status.off { border-left-color: var(--text-3, #888); }
+.loc-status-icon { font-size: 24px; color: var(--accent, #4a9eff); }
+.loc-status-line1 { font-weight: 600; color: var(--text-1, #fff); }
+.loc-status-line2 { font-size: 12px; color: var(--text-3, #888); margin-top: 2px; }
+
+.loc-action-row { display: flex; gap: 8px; }
+.loc-h3 { margin: 8px 0 -4px; font-size: 14px; color: var(--text-2, #aaa); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.loc-granularity { display: flex; flex-direction: column; gap: 8px; }
+.loc-gran {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px;
+  border-radius: var(--radius-m, 8px);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+  cursor: pointer; transition: background .15s, border-color .15s;
+  border: 2px solid transparent;
+}
+.loc-gran:hover { background: var(--bg-3, rgba(255,255,255,0.08)); }
+.loc-gran.active { border-color: var(--accent, #4a9eff); }
+.loc-gran input { margin-top: 4px; accent-color: var(--accent, #4a9eff); }
+.loc-gran-label { font-weight: 600; color: var(--text-1, #ddd); }
+.loc-gran-desc { font-size: 12px; color: var(--text-3, #888); margin-top: 2px; }
+
+.loc-notice {
+  font-size: 12px; line-height: 1.5;
+  padding: 12px; border-radius: var(--radius-m, 8px);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+  color: var(--text-2, #aaa);
+}
+.loc-notice strong { color: var(--text-1, #fff); }
+
+/* ============================================================
    Call view (Phase 5)
    ============================================================ */
 .call-view { display: flex; flex-direction: column; height: 100%; }
