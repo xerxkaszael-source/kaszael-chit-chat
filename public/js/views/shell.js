@@ -4,6 +4,8 @@ import { state, subscribe, notify, me, canModerate, canAdmin, isOwner, isMemberP
 import { el, ic, icBtn, toast, relTime, esc } from '../lib/util.js';
 import { avatar, badge } from '../lib/avatar.js';
 import { renderChat } from './chat.js';
+import { renderInbox } from './inbox.js';
+import { openDm } from './dm.js';
 import { openFriends, openNotifications, openPins, openSearch, openSettings, openProfile, openThemePicker } from './panels.js';
 import { setSoundEnabled } from '../lib/sound.js';
 
@@ -22,6 +24,8 @@ export function renderShell(root, view = 'chat') {
   }
   mainEl.innerHTML = '';
   if (view === 'friends') openFriendsInline();
+  else if (view === 'inbox') renderInbox(mainEl);
+  else if (view === 'dm') { /* dm.js handles its own mount via openDm */ }
   else renderChat(mainEl);
   syncNav(view);
 }
@@ -75,6 +79,7 @@ function drawSidebar() {
   const nav = el('nav', { class: 'side-nav' },
     sideItem('comment', 'Chat', () => { location.hash = '/chat'; closeMobile(); }),
     sideItem('users', 'Friends', () => openFriends()),
+    sideItem('envelope', 'Inbox', () => { location.hash = '/inbox'; closeMobile(); }, () => state.dmUnreadTotal),
     sideItem('bell', 'Notifications', () => openNotifications(), () => state.unreadNotifs),
     sideItem('user', 'Profile', () => openProfile(me().id)),
     sideItem('settings', 'Settings', () => openSettings()),
@@ -132,6 +137,14 @@ function sideItem(iconName, label, onclick, countFn) {
 
 function syncNav(view) {
   sidebarEl.querySelectorAll('.side-item').forEach(i => i.classList.remove('active'));
+  // refresh badges
+  sidebarEl.querySelectorAll('.side-item').forEach(item => {
+    if (item._countFn) {
+      const n = item._countFn();
+      item._countEl.textContent = n > 99 ? '99+' : String(n);
+      item._countEl.classList.toggle('hidden', n === 0);
+    }
+  });
 }
 
 function closeMobile() { sidebarEl.classList.remove('mobile-open'); }

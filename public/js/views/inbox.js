@@ -1,0 +1,85 @@
+// views/inbox.js — DM inbox view (conversation list).
+// Mounted into mainEl when route is 'inbox'.
+import { loadInbox } from '../lib/dm.js';
+import { state, me } from '../lib/state.js';
+import { el, ic, esc, relTime, initials } from '../lib/util.js';
+import { avatar } from '../lib/avatar.js';
+import { openDm } from './dm.js';
+import { toast } from '../lib/util.js';
+
+let inboxEl = null;
+
+export async function renderInbox(mainEl) {
+  inboxEl = el('div', { class: 'inbox-view' },
+    el('div', { class: 'view-head' },
+      el('h2', {}, 'Inbox'),
+      el('p', { class: 'view-sub' }, 'Your private conversations')),
+    el('div', { class: 'inbox-body', id: 'inbox-body' },
+      el('div', { class: 'skeleton-row' }, 'Loading…')));
+  mainEl.append(inboxEl);
+  try {
+    const convs = await loadInbox();
+    drawInbox(convs);
+  } catch (e) {
+    console.error('[chc] inbox load failed', e);
+    const body = document.getElementById('inbox-body');
+    if (body) {
+      body.innerHTML = '';
+      body.append(el('div', { class: 'empty-state' },
+        el('div', { class: 'empty-icon' }, ic('envelope')),
+        el('h3', {}, 'Could not load inbox'),
+        el('p', {}, 'Try refreshing the page.')));
+    }
+    toast('Failed to load inbox', 'error');
+  }
+}
+
+function drawInbox(convs) {
+  const body = document.getElementById('inbox-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  if (!convs || convs.length === 0) {
+    body.append(el('div', { class: 'empty-state' },
+      el('div', { class: 'empty-icon' }, ic('envelope')),
+      el('h3', {}, 'No conversations yet'),
+      el('p', {}, 'Open a friend\'s profile and tap "Message" to start a chat.')));
+    return;
+  }
+
+  // pinned first
+  convs.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (b.pinned && !a.pinned) return 1;
+    const ta = new Date(a.last_message_at || 0).getTime();
+    const tb = new Date(b.last_message_at || 0).getTime();
+    return tb - ta;
+  });
+
+  for (const c of convs) body.append(inboxRow(c));
+}
+
+function inboxRow(c) {
+  const preview = c.last_message_preview || '(no messages yet)';
+  const unread = c.unread_count || 0;
+  const muted = c.muted;
+  const archived = c.archived;
+  const lastAt = c.last_message_at ? relTime(c.last_message_at) : '';
+
+  const row = el('button', {
+    class: `inbox-row${unread > 0 ? ' unread' : ''}${muted ? ' muted' : ''}${archived ? ' archived' : ''}`,
+    onclick: () => openDm(c.conversation_id, c.other_user_id)
+  },
+    avatar({ id: c.other_user_id, username: c.other_username, display_name: c.other_display_name, avatar_color: c.other_avatar_color }, { size: 'md', showPresence: true }),
+    el('div', { class: 'inbox-meta' },
+      el('div', { class: 'inbox-line1' },
+        el('span', { class: 'inbox-name' }, c.other_display_name || c.other_username || 'Unknown'),
+        el('span', { class: 'inbox-time' }, lastAt)),
+      el('div', { class: 'inbox-line2' },
+        el('span', { class: 'inbox-preview' }, preview),
+        unread > 0 ? el('span', { class: 'inbox-unun' }, String(unread > 99 ? '99+' : unread)) : null,
+        muted ? ic('volume-mute', 'inbox-mute-icon') : null,
+        c.pinned ? ic('thumbtack', 'inbox-pin-icon') : null)));
+
+  return row;
+}

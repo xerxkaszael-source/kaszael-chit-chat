@@ -19,6 +19,8 @@ export const state = {
   friends: { accepted: [], pending_in: [], pending_out: [] },
   blocks: [],
   unreadNotifs: 0,
+  dmInbox: [],             // cached inbox from inbox_list RPC
+  dmUnreadTotal: 0,        // sum of unread_count across inbox
   replyTo: null,
   editing: null,
   pendingUploads: [],

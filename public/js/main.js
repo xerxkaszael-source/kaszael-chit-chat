@@ -7,8 +7,10 @@ import { startRealtime, stopRealtime } from './lib/realtime.js';
 import { rpc } from './lib/db.js';
 import { renderAuth } from './views/auth.js';
 import { renderShell } from './views/shell.js';
+import { openDm, cleanupDmRealtime } from './views/dm.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
+import { loadInbox } from './lib/dm.js';
 
 applyTheme();
 watchSystemTheme();
@@ -73,6 +75,12 @@ async function enterApp() {
   } catch (e) {
     console.error('[chc] realtime start failed', e);
   }
+  // Preload DM unread count in background
+  loadInbox().then(convs => {
+    state.dmInbox = convs || [];
+    state.dmUnreadTotal = (convs || []).reduce((s, c) => s + (c.unread_count || 0), 0);
+    notify('route'); // re-sync badges
+  }).catch(() => {});
   if (state.flags.kicked) notify('kicked-banned');
   route();
 }
@@ -82,14 +90,21 @@ export function navigate(hash) { location.hash = hash; }
 
 function route() {
   const h = location.hash.replace(/^#\/?/, '') || 'chat';
-  const [view] = h.split('/');
+  const [view, ...rest] = h.split('/');
   notify('route');
+  // cleanup any open DM realtime when leaving
+  if (view !== 'dm') cleanupDmRealtime();
   const adminViews = new Set(['admin', 'moderation', 'broadcast', 'audit', 'system', 'owner']);
   if (adminViews.has(view)) {
     if (!state.profile || state.isGuest || !(isOwner() || ['admin', 'moderation', 'broadcast'].includes(view) && state.profile)) {
       navigate('/chat'); return;
     }
     renderAdmin(ROOT, view);
+    return;
+  }
+  if (view === 'dm' && rest[0]) {
+    // /dm/<userId>
+    openDm(rest[0]);
     return;
   }
   renderShell(ROOT, view);
