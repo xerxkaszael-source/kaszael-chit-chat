@@ -5,12 +5,16 @@
 //   - Active call: persistent panel with local + remote video tiles,
 //     mic / cam / hangup controls
 //   - History: chronological list with missed/declined/outgoing/incoming icons
+//   - FLOATING BUBBLE (minimized): draggable, persists across views, with
+//     mute/camera/hangup inline; tap bubble to restore.
 //
-// Authorization: RLS + RPCs already enforce that only the two participants
+// Authorization: RLS *** RPCs already enforce that only the two participants
 // can see a given call. UI-side gates are belt-and-braces.
 import { state, me, notify, subscribe as stateSub } from '../lib/state.js';
 import {
   accept, decline, cancel, hangup, toggleMic, toggleCam,
+  isMicOn, isCamOn, toggleMinimize, isMinimized, setPanelPosition,
+  getElapsedSec, forceHangup,
   history as fetchHistory, pollActive, getActive, subscribe as callSub,
   startNegotiation, initiate
 } from '../lib/call.js';
@@ -22,9 +26,11 @@ let viewEl = null;
 let incoming = null;     // last incoming call (for re-render)
 let historyRows = [];
 let panelEl = null;
+let panelTimer = null;   // ticks the elapsed-seconds display
 let _callSub = null;
 let _stateSub = null;
 let _callRowSub = null;  // pg subscription for call row updates
+let _dragState = null;   // { startX, startY, origX, origY, el } for bubble drag
 
 // --- SUBSCRIBE TO NEW CALLS REALTIME ---
 // Watch the calls table for any row where I'm the callee + state=calling.
@@ -95,10 +101,19 @@ function ensureStateSubs() {
       incoming = null;
       renderIncoming();
       renderActive();
+    } else if (ev.type === 'rehydrate') {
+      // After refresh, we have an active call row but no local WebRTC.
+      // Surface a minimal "active call" entry so the UI is consistent.
+      const c = ev.call || {};
+      if (!incoming && c.caller_id && c.callee_id) {
+        incoming = { id: c.id, callerId: c.caller_id, calleeId: c.callee_id, kind: c.kind, rehydrated: true };
+      }
+      renderActive();
     }
   });
   _stateSub = stateSub(() => {
     // re-render active panel when state.profile changes (logout)
+    if (!state.profile) { resetCallUI(); }
     renderActive();
   });
 }
@@ -253,31 +268,205 @@ async function doDecline() {
 }
 
 // --- ACTIVE CALL FLOATING PANEL ---
+// Always rendered into document.body so it persists across view changes.
+// Two visual modes: full (default) and minimized (floating bubble).
 function renderActive() {
+  // Always tear down the existing panel before rebuilding — we want a single
+  // source of truth and no leaked DOM nodes / video elements.
   const old = document.getElementById('call-active-panel');
   if (old) old.remove();
+  stopPanelTimer();
   const a = getActive();
   if (!a) { panelEl = null; return; }
+  panelEl = buildActivePanel(a);
+  document.body.append(panelEl);
+  // Wire streams into the <video> tiles after the DOM is mounted.
+  attachStreamsToPanel(panelEl, a);
+  startPanelTimer(panelEl);
+}
+
+function buildActivePanel(a) {
   const other = state.profiles.get(a.otherId) ||
                 { id: a.otherId, display_name: 'In call', avatar_color: '#888' };
-  const localV = a.kind === 'video' ? el('video', { class: 'call-tile local', autoplay: '', muted: '', playsinline: '' }) : null;
+  const minimized = !!a.minimized;
+  // Local + remote <video> tiles (only for video calls).
   const remoteV = a.kind === 'video' ? el('video', { class: 'call-tile remote', autoplay: '', playsinline: '' }) : null;
-  const avatarBig = a.kind === 'voice' ? avatar(other, { size: 'xl' }) : null;
-  // Attach streams when available
-  setTimeout(() => {
-    const lv = document.querySelector('#call-active-panel .call-tile.local');
-    if (lv && a.localStream) { lv.srcObject = a.localStream; }
-    const rv = document.querySelector('#call-active-panel .call-tile.remote');
-    if (rv && a.remoteStream && a.remoteStream.getTracks().length) { rv.srcObject = a.remoteStream; }
-  }, 0);
-  panelEl = el('div', { id: 'call-active-panel', class: 'call-active-panel' },
-    el('div', { class: 'call-active-tiles' }, remoteV, localV),
-    avatarBig,
-    el('div', { class: 'call-active-name' }, other.display_name || 'In call'),
-    el('div', { class: 'call-active-state' }, a.state),
-    el('div', { class: 'call-active-controls' },
-      el('button', { class: 'call-ctrl', title: 'Toggle mic', onclick: () => toggleMic() }, ic('microphone')),
-      a.kind === 'video' ? el('button', { class: 'call-ctrl', title: 'Toggle camera', onclick: () => toggleCam() }, ic('video-camera')) : null,
-      el('button', { class: 'call-ctrl danger', title: 'Hang up', onclick: () => hangup() }, ic('phone-slash'))));
-  document.body.append(panelEl);
+  const localV = a.kind === 'video' ? el('video', { class: 'call-tile local', autoplay: '', muted: '', playsinline: '' }) : null;
+  const avatarBig = (!minimized && a.kind === 'voice') ? avatar(other, { size: 'xl' }) : null;
+
+  // Always-visible controls on the full panel + bubble row
+  const micBtn = el('button',
+    { class: `call-ctrl${isMicOn() ? '' : ' muted'}`, title: isMicOn() ? 'Mute mic' : 'Unmute mic',
+      'aria-label': isMicOn() ? 'Mute mic' : 'Unmute mic',
+      onclick: () => { toggleMic(); renderActive(); } },
+    ic(isMicOn() ? 'microphone' : 'microphone-slash'));
+  const camBtn = a.kind === 'video' ? el('button',
+    { class: `call-ctrl${isCamOn() ? '' : ' muted'}`, title: isCamOn() ? 'Camera off' : 'Camera on',
+      'aria-label': isCamOn() ? 'Camera off' : 'Camera on',
+      onclick: () => { toggleCam(); renderActive(); } },
+    ic(isCamOn() ? 'video-camera' : 'video-slash')) : null;
+  const hangupBtn = el('button',
+    { class: 'call-ctrl danger', title: 'Hang up', 'aria-label': 'Hang up',
+      onclick: () => hangup() },
+    ic('phone-slash'));
+  const minimizeBtn = el('button',
+    { class: 'call-ctrl ctrl-minimize', title: minimized ? 'Expand' : 'Minimize',
+      'aria-label': minimized ? 'Expand' : 'Minimize',
+      onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
+    ic(minimized ? 'arrow-up-right-and-arrow-down-left-from-center' : 'arrow-down-right-and-arrow-up-left-from-center'));
+
+  // Bubble row: avatar + name + duration + tiny mic/hangup controls.
+  // Visible when minimized OR as a compact mode on the full panel header.
+  const bubbleRow = el('div', { class: 'call-active-bubble-row' },
+    avatar(other, { size: 'sm', showPresence: false }),
+    el('div', { class: 'cab-name' }, other.display_name || 'In call'),
+    el('div', { class: 'cab-time' }, fmtDuration(getElapsedSec())),
+    el('button', { class: 'ctrl-mute', title: isMicOn() ? 'Mute' : 'Unmute', 'aria-label': 'Toggle microphone',
+      onclick: (e) => { e.stopPropagation(); toggleMic(); renderActive(); } },
+      ic(isMicOn() ? 'microphone' : 'microphone-slash')),
+    camBtn && a.kind === 'video' ? el('button',
+      { class: 'ctrl-cam', title: isCamOn() ? 'Camera off' : 'Camera on', 'aria-label': 'Toggle camera',
+        onclick: (e) => { e.stopPropagation(); toggleCam(); renderActive(); } },
+      ic(isCamOn() ? 'video' : 'video-slash')) : null,
+    el('button', { class: 'ctrl-hangup', title: 'Hang up', 'aria-label': 'Hang up',
+      onclick: (e) => { e.stopPropagation(); hangup(); } },
+      ic('phone-slash')));
+
+  const panel = el('div',
+    { id: 'call-active-panel', class: `call-active-panel${minimized ? ' minimized' : ''}`,
+      role: 'dialog', 'aria-label': a.kind === 'video' ? 'Video call' : 'Voice call' },
+    // Top row always shows bubble (avatar + name + duration + tiny controls)
+    bubbleRow,
+    // Full-mode-only: tiles, big avatar, full controls
+    minimized ? null : el('div', { class: 'call-active-tiles' }, remoteV, localV),
+    minimized ? null : avatarBig,
+    minimized ? null : el('div', { class: 'call-active-name' }, other.display_name || 'In call'),
+    minimized ? null : el('div', { class: 'call-active-state' }, a.state),
+    minimized ? null : el('div', { class: 'call-active-controls' },
+      micBtn, camBtn, minimizeBtn, hangupBtn));
+
+  // Click-to-restore when minimized. Drag when minimized (the bubble is
+  // draggable so users can move it out of the way of chat content).
+  if (minimized) {
+    panel.addEventListener('click', (e) => {
+      if (_dragState && _dragState.dragged) { _dragState = null; return; }
+      if (e.target.closest('button')) return; // ignore button clicks inside bubble
+      toggleMinimize();
+    });
+    enableDrag(panel);
+  }
+  // Restore stored position if any
+  if (a.position && typeof a.position.x === 'number') {
+    positionPanel(panel, a.position);
+  }
+  return panel;
+}
+
+function attachStreamsToPanel(panel, a) {
+  // We have to wait for the DOM nodes to actually exist before assigning
+  // srcObject — even a single tick is enough, but a rAF is safer.
+  const apply = () => {
+    if (!panel || !panel.isConnected) return;
+    const lv = panel.querySelector('.call-tile.local');
+    if (lv && a.localStream) {
+      if (lv.srcObject !== a.localStream) lv.srcObject = a.localStream;
+    }
+    const rv = panel.querySelector('.call-tile.remote');
+    if (rv && a.remoteStream && a.remoteStream.getTracks().length) {
+      if (rv.srcObject !== a.remoteStream) rv.srcObject = a.remoteStream;
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+  else setTimeout(apply, 0);
+  // And once more after a delay to catch ICE-track-arrival race (remote
+  // stream gets its first track via the 'track' event AFTER the panel is built).
+  setTimeout(apply, 500);
+}
+
+function startPanelTimer(panel) {
+  stopPanelTimer();
+  panelTimer = setInterval(() => {
+    const p = document.getElementById('call-active-panel');
+    if (!p) { stopPanelTimer(); return; }
+    const t = p.querySelector('.cab-time');
+    if (t) t.textContent = fmtDuration(getElapsedSec());
+    // Also refresh mute/cam icons in case the lib flipped them.
+    const a = getActive(); if (!a) return;
+    const muteBtn = p.querySelector('.ctrl-mute, .call-ctrl[title*="mic" i]');
+    const camBtn = p.querySelector('.ctrl-cam, .call-ctrl[title*="camera" i]');
+    if (muteBtn) {
+      const mic = isMicOn();
+      muteBtn.classList.toggle('muted', !mic);
+      muteBtn.title = mic ? 'Mute mic' : 'Unmute mic';
+      muteBtn.setAttribute('aria-label', muteBtn.title);
+    }
+    if (camBtn) {
+      const cam = isCamOn();
+      camBtn.classList.toggle('muted', !cam);
+      camBtn.title = cam ? 'Camera off' : 'Camera on';
+      camBtn.setAttribute('aria-label', camBtn.title);
+    }
+  }, 1000);
+}
+function stopPanelTimer() {
+  if (panelTimer) { clearInterval(panelTimer); panelTimer = null; }
+}
+
+function enableDrag(panel) {
+  let pid = null;
+  const onDown = (e) => {
+    // Only left mouse / single touch / no modifier keys.
+    if (e.button !== undefined && e.button !== 0) return;
+    pid = e.pointerId != null ? e.pointerId : 'mouse';
+    const rect = panel.getBoundingClientRect();
+    // Switch to absolute positioning the moment we start dragging so we
+    // don't fight the fixed bottom/right anchors.
+    panel.style.left = rect.left + 'px';
+    panel.style.top = rect.top + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.classList.add('dragging');
+    _dragState = { startX: e.clientX, startY: e.clientY, origX: rect.left, origY: rect.top, el: panel, dragged: false, pid };
+    try { panel.setPointerCapture && panel.setPointerCapture(pid); } catch {}
+    e.preventDefault();
+  };
+  const onMove = (e) => {
+    if (!_dragState || _dragState.pid !== pid) return;
+    const dx = e.clientX - _dragState.startX;
+    const dy = e.clientY - _dragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) _dragState.dragged = true;
+    const x = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, _dragState.origX + dx));
+    const y = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, _dragState.origY + dy));
+    panel.style.left = x + 'px';
+    panel.style.top = y + 'px';
+  };
+  const onUp = (e) => {
+    if (!_dragState || _dragState.pid !== pid) return;
+    const rect = panel.getBoundingClientRect();
+    setPanelPosition(rect.left, rect.top);
+    panel.classList.remove('dragging');
+    try { panel.releasePointerCapture && panel.releasePointerCapture(pid); } catch {}
+    setTimeout(() => { if (_dragState && _dragState.pid === pid) _dragState = null; }, 50);
+  };
+  panel.addEventListener('pointerdown', onDown);
+  panel.addEventListener('pointermove', onMove);
+  panel.addEventListener('pointerup', onUp);
+  panel.addEventListener('pointercancel', onUp);
+}
+
+function positionPanel(panel, pos) {
+  panel.style.left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, pos.x)) + 'px';
+  panel.style.top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, pos.y)) + 'px';
+  panel.style.right = 'auto';
+  panel.style.bottom = 'auto';
+}
+
+// Public: force-cleanup on logout / hard reset.
+export function resetCallUI() {
+  forceHangup();
+  const old = document.getElementById('call-active-panel');
+  if (old) old.remove();
+  panelEl = null;
+  stopPanelTimer();
+  incoming = null;
 }

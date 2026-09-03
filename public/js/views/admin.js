@@ -59,18 +59,27 @@ async function moderationView(main, sub = null) {
 
   // Allowed sub-tabs; anything outside this set falls back to 'reports'.
   const validTabs = ['reports', 'states', 'lookup'];
-  let active = validTabs.includes(sub) ? sub : 'reports';
+  let activeTab = validTabs.includes(sub) ? sub : 'reports';
 
   // Build tabs BEFORE setActive so the function can querySelector on them
   // (previous bug: tabs was referenced inside setActive while still in TDZ,
   //  throwing ReferenceError → first tab render failed → user clicks had
   //  no effect and the panel looked "stuck" on the first tab).
-  const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px' });
+  //
+  // Same fix as ownerView: use stable class `mod-tabs` + horizontal-scroll CSS
+  // so the far-right tab on narrow viewports stays reachable. Inline
+  // `display:flex` with no overflow handling was clipping the last tab.
+  const tabs = el('div', { class: 'mod-tabs', role: 'tablist', 'aria-label': 'Moderation sections' });
   main.insertBefore(tabs, content);
 
   function setActive(name, pushHash = true) {
-    active = name;
-    [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    if (!validTabs.includes(name)) name = 'reports';
+    activeTab = name;
+    [...tabs.querySelectorAll('button')].forEach(b => {
+      const isActive = b.dataset.tab === name;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
     content.innerHTML = '';
     if (name === 'reports') reportsTab(content);
     else if (name === 'states') statesTab(content);
@@ -81,17 +90,25 @@ async function moderationView(main, sub = null) {
     if (pushHash && location.hash !== '#/moderation/' + name) {
       location.hash = '/moderation/' + name;
     }
+    // Auto-scroll the active tab into view (so far-right tab is reachable).
+    const btn = tabs.querySelector(`button[data-tab="${name}"]`);
+    if (btn && typeof btn.scrollIntoView === 'function') {
+      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch {}
+    }
   }
   // Append tab buttons NOW that setActive + tabs both exist.
   tabs.append(
     tabBtn('Reports', 'reports', setActive),
     tabBtn('Active mutes & bans', 'states', setActive),
     tabBtn('User lookup', 'lookup', setActive));
-  setActive(active, false);
+  setActive(activeTab, false);
 }
 
 function tabBtn(label, name, setActive) {
-  return el('button', { class: 'btn sm', 'data-tab': name, onclick: () => setActive(name) }, label);
+  return el('button',
+    { class: 'btn sm', 'data-tab': name, id: `mod-tab-${name}`, role: 'tab',
+      'aria-selected': 'false', onclick: () => setActive(name) },
+    label);
 }
 
 async function reportsTab(host) {

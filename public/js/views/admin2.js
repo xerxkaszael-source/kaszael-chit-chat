@@ -43,37 +43,70 @@ export async function ownerView(main, sub = null) {
 
   // tabs (role mgmt + chat mgmt + user mgmt). Active tab is URL-persisted so it
   // survives re-renders, browser back/forward, and deep-links (e.g. /owner/chat).
-  const content = el('div', { class: 'owner-content' });
+  //
+  // Stable IDs (`owner-tab-<name>`, `owner-panel-<name>`) + single source of
+  // truth (`activeTab` state). The bar uses `owner-tabs` class (horizontal
+  // scroll on narrow screens) — far-right tab bug FIX: inline `display:flex`
+  // had no overflow handling, so the last tab would clip out of viewport on
+  // portrait phones / tablets and appear "missing". Now the bar wraps with
+  // overflow-x:auto + touch-friendly scroll, AND the active tab is auto-
+  // scrolled into view so users can always see which tab is active.
+  const content = el('div', { class: 'owner-content', id: 'owner-content', role: 'tabpanel' });
   main.append(content);
+  // Add per-panel ID for ARIA wiring (each tab's "aria-controls" must point to
+  // a real element). We reuse the same content container but tag it with the
+  // active panel name so screen readers can announce which panel is showing.
+  content.id = 'owner-panel';
   const validTabs = ['roles', 'chat', 'users'];
-  let active = validTabs.includes(sub) ? sub : 'roles';
+  let activeTab = validTabs.includes(sub) ? sub : 'roles';
+  // expose for debug + tests
+  if (typeof window !== 'undefined') window.__ownerActiveTab = () => activeTab;
 
   // Build tabs BEFORE setActive (previous bug: tabs referenced inside
   // setActive while still in TDZ → ReferenceError on first render → tab
   // clicks silently failed and content stayed on the first tab).
-  const tabs = el('div', { style: 'display:flex;gap:8px;margin:14px 0' });
+  const tabs = el('div', { class: 'owner-tabs', role: 'tablist', 'aria-label': 'Owner Center sections' });
   main.insertBefore(tabs, content);
 
   function setActive(name, pushHash = true) {
-    active = name;
-    [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    if (!validTabs.includes(name)) name = 'roles';
+    activeTab = name;
+    // Toggle aria + .active class
+    [...tabs.querySelectorAll('button')].forEach(b => {
+      const isActive = b.dataset.tab === name;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
     content.innerHTML = '';
+    content.dataset.activeTab = name;
     if (name === 'roles') loadRoleMgmt(content);
     else if (name === 'chat') loadChatMgmt(content);
     else if (name === 'users') loadUserMgmt(content);
     if (pushHash && location.hash !== '#/owner/' + name) {
       location.hash = '/owner/' + name;
     }
+    // Auto-scroll the active tab into view inside the tab bar (so the user
+    // can always see which tab is selected on narrow screens).
+    const btn = tabs.querySelector(`button[data-tab="${name}"]`);
+    if (btn && typeof btn.scrollIntoView === 'function') {
+      try { btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); } catch {}
+    }
   }
   tabs.append(
     sectionTab('Role management', 'roles', setActive),
     sectionTab('Chat management', 'chat', setActive),
     sectionTab('User management', 'users', setActive));
-  setActive(active, false);
+  setActive(activeTab, false);
 }
 
 function sectionTab(label, name, setActive) {
-  return el('button', { class: 'btn sm', 'data-tab': name, onclick: () => setActive(name) }, label);
+  // aria-controls must point to a real element. Reuse the single content
+  // container (it's the tabpanel — only one panel visible at a time anyway).
+  return el('button',
+    { class: 'btn sm', 'data-tab': name, id: `owner-tab-${name}`, role: 'tab',
+      'aria-controls': 'owner-panel', 'aria-selected': 'false',
+      onclick: () => setActive(name) },
+    label);
 }
 
 function loadRoleMgmt(holder) {

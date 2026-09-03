@@ -9,7 +9,7 @@ import { renderAuth } from './views/auth.js';
 import { renderShell } from './views/shell.js';
 import { openDm, cleanupDmRealtime } from './views/dm.js';
 import { renderNotifications } from './views/notifications.js';
-import { renderCallView } from './views/call.js';
+import { renderCallView, resetCallUI } from './views/call.js';
 import { renderLocationSettings } from './views/location-settings.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
@@ -154,6 +154,7 @@ subscribe((topic) => {
   if (topic === 'kicked-banned') {
     // heartbeat told us we're kicked/banned → force back to auth
     stopRealtime();
+    try { resetCallUI(); } catch {}
     entered = false;
     sb.auth.signOut().finally(() => location.reload());
   }

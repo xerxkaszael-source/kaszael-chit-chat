@@ -10,37 +10,59 @@
 //   - DB: calls table + call_ice_candidates (fallback) + RPCs (state machine)
 //   - Media: RTCPeerConnection + getUserMedia, both for caller and callee
 //
-// The signaling channel is "public" Supabase broadcast (no private channels
-// for low-cost). Authz is enforced by:
-//   1. checking call_id participant in the message handler (drop if not for us)
-//   2. server-side RLS on calls + call_ice_candidates
-//   3. RPCs that enforce participant + block state
+// Authorization (HARDENED v2): signaling authorization is enforced server-side
+// via SECURITY DEFINER RPCs (call_initiate/end/ice) and RLS on `calls` +
+// `call_ice_candidates`. The Realtime broadcast channel itself is "public" in
+// the Supabase sense (any authenticated user could in theory listen on
+// `call:<uuid>`), but the JS handler (1) checks `payload.from` against the
+// caller/callee ids, (2) drops anything whose `from` is not a participant.
+// Plus the postgres_changes subscription on `calls` is RLS-filtered (callers/
+// callees only see their own rows). The 'audio'/'voice' route alias was
+// removed at the router; the DB column is `kind in ('voice','video')`.
 import { rpc, sb } from './db.js';
 import { state, notify } from './state.js';
 import { toast } from './util.js';
 
+// ICE servers — STUN only by default (free, no auth). Production TURN should
+// be provisioned via env vars or a credential-fetch RPC; see comments below.
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' }
-  // TURN servers intentionally omitted here — they require auth credentials
-  // that should be provisioned out-of-band for production. Without TURN, calls
-  // will fail for users behind symmetric NATs. This is documented as a known
-  // limitation in §89 REMAINING section.
+  // TURN intentionally omitted — requires auth credentials. Architecture is
+  // TURN-ready: pass `iceTransportPolicy: 'relay'` and an array of TURN
+  // entries from `window.SUPABASE_CONFIG.iceServers || []` once provisioned.
 ];
+// Optional override (used by tests; never expose in prod logs).
+const EXTRA_ICE = (typeof window !== 'undefined' && window.SUPABASE_CONFIG && Array.isArray(window.SUPABASE_CONFIG.iceServers))
+  ? window.SUPABASE_CONFIG.iceServers : [];
+if (EXTRA_ICE.length) ICE_SERVERS.push(...EXTRA_ICE);
 
-let activeCall = null; // { callId, peer, localStream, remoteStream, kind, role, signaling, state }
+let activeCall = null; // { callId, peer, localStream, remoteStream, kind, role, signaling, state, minimized, position }
 const _listeners = new Set();
 
 export function subscribe(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
 function emit(ev) { for (const fn of _listeners) fn(ev); notify('call'); }
 
 // ---- helpers ----
-function getUserId() { return state.profile?.id; }
+function getUserId() { return state.profile && state.profile.id; }
 function isParticipant(callId) {
-  // We need to know if we're a participant. activeCall tracks current session.
-  return activeCall?.callId === callId;
+  // activeCall tracks current session. Plus the DB calls row enforces it.
+  return activeCall && activeCall.callId === callId;
 }
+// True iff a payload's `from` uid is one of the call's two participants.
+function isFromParticipant(payload) {
+  if (!payload || !payload.from || !activeCall) return false;
+  if (payload.from === activeCall.otherId) return true;
+  if (state.profile && payload.from === state.profile.id) return true; // self
+  return false;
+}
+
+// 60s caller-side timeout. The DB-side miss_sweep handles server-side cleanup
+// after 60s, but the caller UI should give up and cancel before then so the
+// caller doesn't stare at a ringing screen.
+const CALL_TIMEOUT_MS = 50_000;
+let _callerTimeoutTimer = null;
 
 // ---- initiate (caller) ----
 export async function initiate(calleeId, kind = 'voice') {
@@ -53,15 +75,26 @@ export async function initiate(calleeId, kind = 'voice') {
     if (!r?.ok) throw new Error(r?.error || 'initiate_failed');
     activeCall = {
       callId: r.call_id,
-      peer: null, // created on accept (callee) or after they accept (caller)
+      peer: null,
       localStream: null,
       remoteStream: new MediaStream(),
       kind, role: 'caller', state: 'calling',
-      otherId: calleeId
+      otherId: calleeId,
+      minimized: false,
+      position: null,
+      startedAt: Date.now(),
+      connectedAt: null
     };
-    // Caller subscribes to signaling immediately to hear accept/decline/answer/ICE
     setupSignaling();
     emit({ type: 'state', call: activeCall });
+    // Auto-miss timeout: if no accept within 50s, cancel.
+    clearTimeout(_callerTimeoutTimer);
+    _callerTimeoutTimer = setTimeout(() => {
+      if (activeCall && activeCall.callId === r.call_id && activeCall.state !== 'connected') {
+        toast('No answer', 'info');
+        cancel();
+      }
+    }, CALL_TIMEOUT_MS);
     return r.call_id;
   } catch (e) {
     toast(`Call failed: ${e.message}`, 'error');
@@ -72,21 +105,35 @@ export async function initiate(calleeId, kind = 'voice') {
 // ---- handle incoming call (callee) ----
 export async function handleIncoming(callId, callerId, kind) {
   if (activeCall) {
-    // Auto-decline the new one
+    // Auto-decline the new one (we're already in a call)
     rpc('call_decline', { v_call_id: callId, v_reason: 'busy' }).catch(() => {});
     return;
   }
+  // Reject if we have this user blocked (defense in depth; server also checks
+  // in call_initiate, but if the block was added between then and now, this
+  // protects us client-side too).
+  try {
+    const blocks = state.blocks || [];
+    if (blocks.includes(callerId)) {
+      rpc('call_decline', { v_call_id: callId, v_reason: 'blocked' }).catch(() => {});
+      return;
+    }
+  } catch {}
   activeCall = {
     callId, kind, role: 'callee', state: 'ringing',
     peer: null, localStream: null,
     remoteStream: new MediaStream(),
-    otherId: callerId
+    otherId: callerId,
+    minimized: false,
+    position: null,
+    startedAt: Date.now(),
+    connectedAt: null
   };
   // Tell the caller we got the notification (informational; not strictly required)
   rpc('call_ringing', { v_call_id: callId }).catch(() => {});
   setupSignaling();
   emit({ type: 'incoming', call: activeCall });
-  // Auto-miss-sweep: if no answer in 60s, server RPC will mark as missed
+  // The DB miss_sweep RPC marks unanswered calls after 60s.
 }
 
 // ---- accept (callee) ----
@@ -96,12 +143,14 @@ export async function accept() {
     // Acquire media BEFORE the RPC so we can answer with media ready
     const stream = await acquireMedia(activeCall.kind);
     activeCall.localStream = stream;
+    activeCall.connectedAt = Date.now();
+    clearTimeout(_callerTimeoutTimer);
     await rpc('call_accept', { v_call_id: activeCall.callId });
     // Caller will then create the offer; we listen for it on signaling.
     activeCall.state = 'accepted';
     emit({ type: 'state', call: activeCall });
   } catch (e) {
-    toast(`Cannot start media: ${e.message}`, 'error');
+    toast(`Cannot start media: ${friendlyMediaError(e)}`, 'error');
     await decline('media_failed');
   }
 }
@@ -133,48 +182,134 @@ async function acquireMedia(kind) {
   return navigator.mediaDevices.getUserMedia(constraints);
 }
 
+// Translate the most common getUserMedia errors into a useful toast message.
+function friendlyMediaError(e) {
+  const msg = (e && (e.message || String(e))) || '';
+  const name = e && e.name;
+  if (name === 'NotAllowedError' || /denied|permission/i.test(msg)) {
+    return kind => kind === 'video' ? 'Camera/mic permission denied.' : 'Microphone permission denied.';
+  }
+  if (name === 'NotFoundError' || /NotFound|not found/i.test(msg)) {
+    return 'No microphone/camera found on this device.';
+  }
+  if (name === 'NotReadableError') {
+    return 'Microphone/camera is busy in another app.';
+  }
+  if (name === 'OverconstrainedError') {
+    return 'Camera does not support the requested settings.';
+  }
+  return msg || 'Could not start media.';
+}
+
 function releaseMedia(stream) {
   if (!stream) return;
-  for (const track of stream.getTracks()) track.stop();
+  for (const track of stream.getTracks()) {
+    try { track.stop(); } catch {}
+  }
 }
 
 function buildPeerConnection() {
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const pc = new RTCPeerConnection({
+    iceServers: ICE_SERVERS,
+    iceCandidatePoolSize: 10
+  });
   pc.addEventListener('icecandidate', ({ candidate }) => {
     if (candidate && activeCall) {
-      // Send via Realtime broadcast (low latency) + persist to DB (fallback)
-      sendSignal({ type: 'ice', payload: candidate.toJSON() });
+      // Send via Realtime broadcast (low latency) + persist to DB (fallback).
+      // Wrap as JSON for compatibility.
+      try {
+        sendSignal({ type: 'ice', payload: candidate.toJSON ? candidate.toJSON() : candidate });
+      } catch {}
+      // DB fallback — server enforces participant + call_id membership.
       rpc('call_ice_candidate', { v_call_id: activeCall.callId, v_candidate: candidate.toJSON() }).catch(() => {});
     }
   });
   pc.addEventListener('track', (ev) => {
-    if (activeCall) {
+    if (!activeCall) return;
+    try {
       for (const track of ev.streams[0].getTracks()) {
         activeCall.remoteStream.addTrack(track);
       }
       emit({ type: 'remote-track', call: activeCall });
+    } catch (e) {
+      console.error('[chc] track handler error', e);
     }
   });
   pc.addEventListener('connectionstatechange', () => {
     if (!activeCall) return;
     const cs = pc.connectionState;
-    if (cs === 'connected') { activeCall.state = 'connected'; emit({ type: 'state', call: activeCall }); }
-    else if (cs === 'failed') { activeCall.state = 'failed'; emit({ type: 'state', call: activeCall }); toast('Call connection failed', 'error'); hangup('failed'); }
-    else if (cs === 'disconnected') { activeCall.state = 'reconnecting'; emit({ type: 'state', call: activeCall }); }
+    if (cs === 'connected') {
+      activeCall.state = 'connected';
+      activeCall.connectedAt = activeCall.connectedAt || Date.now();
+      emit({ type: 'state', call: activeCall });
+    } else if (cs === 'failed') {
+      // ICE failure — attempt ICE restart once before giving up.
+      tryIceRestart(pc);
+    } else if (cs === 'disconnected') {
+      activeCall.state = 'reconnecting';
+      emit({ type: 'state', call: activeCall });
+      // If we don't recover in 10s, declare failed.
+      setTimeout(() => {
+        if (activeCall && activeCall.peer === pc && pc.connectionState !== 'connected') {
+          tryIceRestart(pc);
+        }
+      }, 10_000);
+    }
+  });
+  pc.addEventListener('iceconnectionstatechange', () => {
+    if (!activeCall) return;
+    if (pc.iceConnectionState === 'failed') tryIceRestart(pc);
   });
   return pc;
+}
+
+// ICE restart: ask for fresh candidates with new ufrag/pwd.
+function tryIceRestart(pc) {
+  if (!activeCall || activeCall.peer !== pc) return;
+  if (activeCall._iceRestartInFlight) return;
+  activeCall._iceRestartInFlight = true;
+  try {
+    const offer = pc.createOffer({ iceRestart: true });
+    offer.then(o => pc.setLocalDescription(o)).then(() => {
+      if (activeCall && activeCall.peer === pc) {
+        sendSignal({ type: 'offer', payload: pc.localDescription });
+      }
+    }).catch(() => {});
+    // Give the restart ~12s, then declare failed.
+    setTimeout(() => {
+      if (activeCall && activeCall.peer === pc && pc.connectionState !== 'connected') {
+        activeCall.state = 'failed';
+        emit({ type: 'state', call: activeCall });
+        toast('Call connection failed', 'error');
+        hangup('failed');
+      }
+      activeCall._iceRestartInFlight = false;
+    }, 12_000);
+  } catch (e) {
+    activeCall._iceRestartInFlight = false;
+    activeCall.state = 'failed';
+    emit({ type: 'state', call: activeCall });
+    toast('Call connection failed', 'error');
+    hangup('failed');
+  }
 }
 
 // ---- signaling ----
 let signalingChannel = null;
 function setupSignaling() {
-  if (signalingChannel) sb.removeChannel(signalingChannel);
+  if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch {} }
   signalingChannel = sb.channel(`call:${activeCall.callId}`, { config: { broadcast: { self: false } } });
   signalingChannel
     .on('broadcast', { event: 'signal' }, async ({ payload }) => {
-      if (!payload || !isParticipant(activeCall?.callId)) return;
-      if (payload.from === getUserId()) return; // ignore self
-      await onSignal(payload);
+      if (!payload) return;
+      if (!isParticipant(activeCall && activeCall.callId)) return;
+      if (payload.from === getUserId()) return; // ignore self (server echo)
+      if (!isFromParticipant(payload)) {
+        console.warn('[chc] dropped signal from non-participant', payload.from);
+        return;
+      }
+      try { await onSignal(payload); }
+      catch (e) { console.error('[chc] signal handler error', e); }
     })
     .subscribe();
 }
@@ -183,14 +318,25 @@ async function onSignal(msg) {
   if (!activeCall) return;
   try {
     if (msg.type === 'answer') {
+      if (!activeCall.peer) activeCall.peer = buildPeerConnection();
+      if (activeCall.localStream) {
+        // Idempotent — only add tracks we don't already have on the sender.
+        const existing = activeCall.peer.getSenders().map(s => s.track && s.track.kind);
+        for (const track of activeCall.localStream.getTracks()) {
+          if (!existing.includes(track.kind)) activeCall.peer.addTrack(track, activeCall.localStream);
+        }
+      }
       await activeCall.peer.setRemoteDescription(new RTCSessionDescription(msg.payload));
       activeCall.state = 'connected';
+      activeCall.connectedAt = activeCall.connectedAt || Date.now();
+      clearTimeout(_callerTimeoutTimer);
       emit({ type: 'state', call: activeCall });
     } else if (msg.type === 'offer') {
       if (!activeCall.peer) activeCall.peer = buildPeerConnection();
       if (activeCall.localStream) {
+        const existing = activeCall.peer.getSenders().map(s => s.track && s.track.kind);
         for (const track of activeCall.localStream.getTracks()) {
-          activeCall.peer.addTrack(track, activeCall.localStream);
+          if (!existing.includes(track.kind)) activeCall.peer.addTrack(track, activeCall.localStream);
         }
       }
       await activeCall.peer.setRemoteDescription(new RTCSessionDescription(msg.payload));
@@ -199,7 +345,7 @@ async function onSignal(msg) {
       sendSignal({ type: 'answer', payload: answer });
     } else if (msg.type === 'ice') {
       if (!activeCall.peer) activeCall.peer = buildPeerConnection();
-      try { await activeCall.peer.addIceCandidate(new RTCIceCandidate(msg.payload)); } catch (e) { /* late candidate */ }
+      try { await activeCall.peer.addIceCandidate(new RTCIceCandidate(msg.payload)); } catch { /* late candidate */ }
     } else if (msg.type === 'bye') {
       teardown(msg.reason || 'ended');
     } else if (msg.type === 'renegotiate') {
@@ -220,20 +366,18 @@ function sendSignal(msg) {
 }
 
 // Caller starts the WebRTC negotiation after seeing 'accepted' state
-// (via realtime subscription on calls table — handled by views/call.js or
-// by the caller also subscribing to the calls row).
-// Here we expose a helper that the caller can call once it sees accepted.
+// (via realtime subscription on calls table — handled by views/call.js).
 export async function startNegotiation() {
-  if (!activeCall || activeCall.role !== 'caller' || !activeCall.peer) {
-    if (!activeCall) return;
-    activeCall.peer = buildPeerConnection();
-  }
+  if (!activeCall || activeCall.role !== 'caller') return;
+  if (!activeCall.peer) activeCall.peer = buildPeerConnection();
   if (!activeCall.localStream) {
     activeCall.localStream = await acquireMedia(activeCall.kind);
     emit({ type: 'local-stream', call: activeCall });
   }
+  // Idempotent track add — don't double-add the same track kind.
+  const existing = activeCall.peer.getSenders().map(s => s.track && s.track.kind);
   for (const track of activeCall.localStream.getTracks()) {
-    activeCall.peer.addTrack(track, activeCall.localStream);
+    if (!existing.includes(track.kind)) activeCall.peer.addTrack(track, activeCall.localStream);
   }
   const offer = await activeCall.peer.createOffer();
   await activeCall.peer.setLocalDescription(offer);
@@ -244,7 +388,7 @@ export async function startNegotiation() {
 
 // ---- local media controls ----
 export function toggleMic() {
-  if (!activeCall?.localStream) return false;
+  if (!activeCall || !activeCall.localStream) return false;
   const track = activeCall.localStream.getAudioTracks()[0];
   if (!track) return false;
   track.enabled = !track.enabled;
@@ -252,24 +396,69 @@ export function toggleMic() {
   return track.enabled;
 }
 export function toggleCam() {
-  if (!activeCall?.localStream) return false;
+  if (!activeCall || !activeCall.localStream) return false;
   const track = activeCall.localStream.getVideoTracks()[0];
   if (!track) return false;
   track.enabled = !track.enabled;
   emit({ type: 'state', call: activeCall });
   return track.enabled;
 }
+export function isMicOn() {
+  const t = activeCall && activeCall.localStream && activeCall.localStream.getAudioTracks()[0];
+  return !!(t && t.enabled);
+}
+export function isCamOn() {
+  const t = activeCall && activeCall.localStream && activeCall.localStream.getVideoTracks()[0];
+  return !!(t && t.enabled);
+}
 
 // ---- teardown ----
 function teardown(reason) {
+  // Best-effort 'bye' broadcast so the other side can drop their channel.
+  if (signalingChannel && activeCall) {
+    try { signalingChannel.send({
+      type: 'broadcast', event: 'signal',
+      payload: { type: 'bye', from: getUserId(), call_id: activeCall.callId, reason }
+    }); } catch {}
+  }
   if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch {} signalingChannel = null; }
   if (activeCall) {
     releaseMedia(activeCall.localStream);
+    // release remote tracks too (belt-and-braces — they should be GC'd anyway)
+    if (activeCall.remoteStream) {
+      for (const t of activeCall.remoteStream.getTracks()) { try { t.stop(); } catch {} }
+    }
     if (activeCall.peer) { try { activeCall.peer.close(); } catch {} }
-    const final = { ...activeCall, state: reason };
+    const final = Object.assign({}, activeCall, { state: reason });
     activeCall = null;
     emit({ type: 'ended', call: final, reason });
   }
+  clearTimeout(_callerTimeoutTimer);
+}
+
+// ---- minimize / restore (floating bubble) ----
+export function setMinimized(min) {
+  if (!activeCall) return;
+  activeCall.minimized = !!min;
+  emit({ type: 'state', call: activeCall });
+}
+export function toggleMinimize() {
+  if (!activeCall) return null;
+  setMinimized(!activeCall.minimized);
+  return activeCall.minimized;
+}
+export function isMinimized() { return !!(activeCall && activeCall.minimized); }
+
+// Set absolute panel position (used by drag in the view layer).
+export function setPanelPosition(x, y) {
+  if (!activeCall) return;
+  activeCall.position = { x, y };
+}
+
+// Force-end: cleans up without server RPC. Used on logout / hard reset.
+export function forceHangup() {
+  if (!activeCall) return;
+  teardown('client_reset');
 }
 
 // ---- history ----
@@ -281,7 +470,7 @@ export async function history(limit = 30, beforeId = null) {
 export async function pollActive() {
   try {
     const r = await rpc('call_active');
-    if (r?.call) {
+    if (r && r.call) {
       // We have an active call but lost local state (refresh?). Restore minimally.
       if (!activeCall) {
         // We can't fully restore the WebRTC session, but at least surface the
@@ -293,3 +482,9 @@ export async function pollActive() {
 }
 
 export function getActive() { return activeCall; }
+
+// Elapsed seconds since connected (for the duration display).
+export function getElapsedSec() {
+  if (!activeCall || !activeCall.connectedAt) return 0;
+  return Math.max(0, Math.floor((Date.now() - activeCall.connectedAt) / 1000));
+}

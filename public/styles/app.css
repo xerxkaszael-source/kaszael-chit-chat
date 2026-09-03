@@ -451,6 +451,52 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .data-table td { padding: 9px 10px; border-bottom: 1px solid var(--line-1); vertical-align: middle; }
 .data-table tr:hover td { background: var(--bg-1); }
 .table-wrap { overflow-x: auto; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: var(--radius-m); }
+
+/* ---- Section tabs (Owner / Moderation) ----
+   Same horizontal-scroll pattern used by `.admin-side` on narrow screens,
+   applied to the IN-PAGE tab bar inside Owner Center / Moderation so the
+   far-right tab stays reachable on portrait phones / tablets. Without this,
+   the last tab was clipped out of viewport (was the root cause of the
+   "clicked tab stays active but content jumps" symptom — content actually
+   re-rendered for the clicked tab, but the tab itself was off-screen so
+   the user perceived a state mismatch). */
+.owner-tabs, .mod-tabs {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 14px 0;
+  /* Wrap by default (desktop). On narrow screens fall back to horizontal
+     scroll so all tabs stay reachable instead of clipping the rightmost. */
+}
+.owner-tabs .btn.sm, .mod-tabs .btn.sm {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: 36px;
+}
+.owner-tabs .btn.sm.active, .mod-tabs .btn.sm.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+}
+.mod-tabs { margin-bottom: 14px; }
+
+@media (max-width: 700px) {
+  .owner-tabs, .mod-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 4px; /* room for scrollbar */
+  }
+  /* Fade edges so users see there's more content to scroll horizontally. */
+  .owner-tabs::after, .mod-tabs::after {
+    content: ""; flex: 0 0 16px; pointer-events: none;
+  }
+}
+@media (max-width: 460px) {
+  .owner-tabs .btn.sm, .mod-tabs .btn.sm {
+    font-size: .8rem;
+    padding: 7px 12px;
+  }
+}
 .danger-zone { border: 1px solid var(--danger); border-radius: var(--radius-m); padding: 16px; margin-top: 22px; }
 .danger-zone h3 { color: var(--danger); display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .dz-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-1); flex-wrap: wrap; }
@@ -826,26 +872,77 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 .call-incoming-actions { display: flex; gap: 16px; margin-top: 8px; }
 .call-incoming-actions .btn { padding: 12px 20px; font-size: 15px; }
 
-/* Active call floating panel */
+/* Active call floating panel — persistent across views, minimizes here */
 .call-active-panel {
-  position: fixed; bottom: 16px; right: 16px; z-index: 999;
+  position: fixed; bottom: calc(16px + var(--safe-b)); right: 16px; z-index: 999;
   background: var(--bg-1, #1a1a1a);
   border-radius: var(--radius-l, 16px);
-  padding: 16px; min-width: 280px; max-width: 360px;
+  padding: 16px; min-width: 280px; max-width: min(360px, calc(100vw - 24px));
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   box-shadow: 0 10px 40px rgba(0,0,0,0.5);
   animation: scale-in .2s ease-out;
+  /* safe-area for notched phones */
+  padding-bottom: calc(16px + var(--safe-b));
 }
+.call-active-panel.minimized {
+  /* Floating "bubble" mode — small, draggable, single line */
+  min-width: 200px; max-width: 240px; padding: 10px 12px;
+  gap: 6px; cursor: grab;
+}
+.call-active-panel.dragging { cursor: grabbing; transition: none; }
 .call-active-tiles {
   display: flex; gap: 6px; width: 100%;
   border-radius: var(--radius-m, 8px); overflow: hidden;
   background: var(--bg-3, #000);
+  position: relative;
 }
 .call-tile { width: 100%; max-height: 180px; object-fit: cover; }
 .call-tile.local { max-width: 100px; max-height: 100px; border-radius: 8px; align-self: flex-end; }
 .call-active-name { font-weight: 600; color: var(--text-1, #fff); }
 .call-active-state { font-size: 12px; color: var(--accent, #4a9eff); text-transform: uppercase; font-weight: 600; }
 .call-active-controls { display: flex; gap: 10px; margin-top: 4px; }
+.call-active-panel.minimized .call-active-tiles,
+.call-active-panel.minimized .call-active-name { display: none; }
+.call-active-panel.minimized .call-active-controls .ctrl-minimize { display: none; }
+.call-active-bubble-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+}
+.call-active-bubble-row .cab-name {
+  flex: 1; font-weight: 600; font-size: .9rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-active-bubble-row .cab-time {
+  font-size: .72rem; color: var(--text-3, #888);
+}
+.call-active-bubble-row .ctrl-minimize,
+.call-active-bubble-row .ctrl-mute,
+.call-active-bubble-row .ctrl-cam,
+.call-active-bubble-row .ctrl-hangup {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--bg-3, rgba(255,255,255,0.1));
+  color: var(--text-1, #fff);
+  border: 0; cursor: pointer; display: grid; place-items: center;
+  font-size: 14px;
+}
+.call-active-bubble-row .ctrl-hangup { background: var(--danger, #e74c3c); }
+.call-active-bubble-row .ctrl-hangup:hover { background: #c0392b; }
+
+/* Landscape phone: make video call maximize area, keep controls reachable */
+@media (orientation: landscape) and (max-height: 500px) {
+  .call-active-panel {
+    bottom: calc(8px + var(--safe-b)); right: 8px;
+    min-width: 220px; max-width: min(320px, calc(100vw - 16px));
+    padding: 10px;
+  }
+  .call-tile { max-height: 110px; }
+  .call-tile.local { max-width: 80px; max-height: 80px; }
+}
+@media (orientation: portrait) and (max-width: 480px) {
+  .call-active-panel {
+    left: 8px; right: 8px;
+    min-width: 0; max-width: calc(100vw - 16px);
+  }
+}
 .call-ctrl {
   width: 44px; height: 44px; border-radius: 50%;
   background: var(--bg-3, rgba(255,255,255,0.1));
