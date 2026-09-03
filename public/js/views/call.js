@@ -103,7 +103,7 @@ function ensureStateSubs() {
   });
 }
 
-export async function renderCallView(mainEl, sub = 'inbox') {
+export async function renderCallView(mainEl, sub = 'inbox', callKind = null, calleeId = null) {
   viewEl = el('div', { class: 'call-view' },
     el('div', { class: 'view-head' },
       el('h2', {}, sub === 'history' ? 'Call history' : 'Calls'),
@@ -120,6 +120,21 @@ export async function renderCallView(mainEl, sub = 'inbox') {
   // The active call panel is a separate floating element rendered in the
   // app shell so it stays visible across views.
   renderActive();
+
+  // Auto-initiate when route is /call/audio/<userId> or /call/video/<userId>.
+  // Skipped when there is already an active call to avoid duplicate notifications.
+  if (callKind && calleeId && (callKind === 'audio' || callKind === 'video')) {
+    try {
+      if (!getActive()) {
+        const r = await initiate(calleeId, callKind);
+        if (r && r.ok) {
+          toast((callKind === 'video' ? 'Video' : 'Voice') + ' call started', 'ok');
+        }
+      }
+    } catch (e) {
+      toast(e.chc && e.chc.text || 'Could not start call', 'error');
+    }
+  }
 }
 
 async function refresh() {

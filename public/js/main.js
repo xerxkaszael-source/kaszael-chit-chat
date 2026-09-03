@@ -120,10 +120,18 @@ function route() {
     return;
   }
   if (view === 'call') {
-    // /call/<tab>           — call history/inbox
+    // /call/<tab>           — call history/inbox (rest[0] = 'inbox'|'history')
     // /call/audio/<userId>  — initiate voice call to userId
     // /call/video/<userId>  — initiate video call to userId
-    renderCallView(ROOT.querySelector('.main') || ROOT, rest[0] || 'inbox', rest[1] || null, rest[2] || null);
+    let _sub = 'inbox', _kind = null, _callee = null;
+    if (rest[0] === 'audio' || rest[0] === 'video') {
+      // route is /call/<kind>/<userId> — no inbox/history tab
+      _kind = rest[0];
+      _callee = rest[1] || null;
+    } else {
+      _sub = rest[0] || 'inbox';
+    }
+    renderCallView(ROOT.querySelector('.main') || ROOT, _sub, _kind, _callee);
     return;
   }
   if (view === 'location') {
