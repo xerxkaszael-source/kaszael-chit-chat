@@ -12,7 +12,7 @@ import { state, me, notify, subscribe as stateSub } from '../lib/state.js';
 import {
   accept, decline, cancel, hangup, toggleMic, toggleCam,
   history as fetchHistory, pollActive, getActive, subscribe as callSub,
-  startNegotiation
+  startNegotiation, initiate
 } from '../lib/call.js';
 import { el, ic, esc, relTime, fmtDuration, toast } from '../lib/util.js';
 import { avatar } from '../lib/avatar.js';

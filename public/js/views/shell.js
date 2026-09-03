@@ -129,25 +129,20 @@ function sideItem(iconName, label, onclick, countFn) {
   const item = el('button', { class: 'side-item', onclick }, ic(iconName), el('span', {}, label));
   if (countFn) {
     const c = el('span', { class: 'count hidden' }, '0');
-    // Optional: small green-dot indicator alongside the count badge for instant
-    // visibility even when the user is on a small mobile viewport.
-    const dot = el('span', { class: 'green-dot hidden', 'aria-hidden': 'true' });
-    item.append(dot);
     item.append(c);
-    item._countFn = countFn; item._countEl = c; item._dotEl = dot;
+    item._countFn = countFn; item._countEl = c;
   }
   return item;
 }
 
 function syncNav(view) {
   sidebarEl.querySelectorAll('.side-item').forEach(i => i.classList.remove('active'));
-  // refresh badges + green dots
+  // refresh count badges
   sidebarEl.querySelectorAll('.side-item').forEach(item => {
     if (item._countFn) {
       const n = item._countFn();
       item._countEl.textContent = n > 99 ? '99+' : String(n);
       item._countEl.classList.toggle('hidden', n === 0);
-      if (item._dotEl) item._dotEl.classList.toggle('hidden', n === 0);
     }
   });
 }

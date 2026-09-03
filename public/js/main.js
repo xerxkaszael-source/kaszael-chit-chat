@@ -120,7 +120,10 @@ function route() {
     return;
   }
   if (view === 'call') {
-    renderCallView(ROOT.querySelector('.main') || ROOT, rest[0] || 'inbox');
+    // /call/<tab>           — call history/inbox
+    // /call/audio/<userId>  — initiate voice call to userId
+    // /call/video/<userId>  — initiate video call to userId
+    renderCallView(ROOT.querySelector('.main') || ROOT, rest[0] || 'inbox', rest[1] || null, rest[2] || null);
     return;
   }
   if (view === 'location') {

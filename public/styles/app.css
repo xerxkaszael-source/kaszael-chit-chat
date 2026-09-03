@@ -976,24 +976,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 }
 
 
-/* Green-dot indicator on sidebar nav items (Inbox, Notifications when unread > 0).
-   Renders as a small green circle beside the icon — high-visibility on mobile. */
-.green-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #34d399;
-  box-shadow: 0 0 0 2px var(--bg-1, transparent);
-  margin-left: auto;
-  flex-shrink: 0;
-  animation: green-dot-pulse 1.6s ease-in-out infinite;
-}
-.green-dot.hidden { display: none; }
-@keyframes green-dot-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 2px var(--bg-1, transparent), 0 0 0 0 rgba(52, 211, 153, 0.7); }
-  50%      { opacity: .85; box-shadow: 0 0 0 2px var(--bg-1, transparent), 0 0 0 5px rgba(52, 211, 153, 0); }
-}
+
 
 /* Inbox row improvements (left-tag, hidden row dim) */
 .inbox-row.left { opacity: 0.6; }

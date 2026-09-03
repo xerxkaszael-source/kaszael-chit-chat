@@ -134,11 +134,29 @@ function drawShell() {
   dmViewEl.innerHTML = '';
   dmViewEl.append(
     el('div', { class: 'view-head dm-head' },
-      icBtn('arrow-left', 'Back', () => { location.hash = '/inbox'; }),
+      icBtn('arrow-left', 'Back', () => {
+        // Force hash navigation: set to empty first so hashchange always fires,
+        // then set to /inbox. This avoids the case where route() is a no-op
+        // because the resolved view name happens to match.
+        if (location.hash === '#/inbox' || location.hash === '#inbox') {
+          // already there — force re-route by triggering a different hash
+          location.hash = '#/chat';
+          requestAnimationFrame(() => { location.hash = '#/inbox'; });
+        } else {
+          location.hash = '/inbox';
+        }
+      }),
       avatar(other, { size: 'sm', showPresence: true }),
       el('div', { class: 'dm-title' },
         el('div', { class: 'dm-name' }, other.display_name || other.username),
         el('div', { class: 'dm-sub' }, `@${other.username}`)),
+      // Call buttons (voice + video). Use hash routing /call/<type>/<userId>.
+      icBtn('phone', 'Voice call', () => {
+        location.hash = '/call/audio/' + currentOtherId;
+      }),
+      icBtn('video', 'Video call', () => {
+        location.hash = '/call/video/' + currentOtherId;
+      }),
       el('div', { class: 'topbar-spacer' })),
     el('div', { class: 'dm-body', id: 'dm-body' },
       el('div', { class: 'skeleton-row' }, 'Loading messages…')),

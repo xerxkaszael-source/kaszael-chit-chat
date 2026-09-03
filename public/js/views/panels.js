@@ -183,6 +183,19 @@ function renderProfileBody(container, prof, pres, userId, rp) {
         ' · joined ' + new Date(prof.created_at).toLocaleDateString())));
   if (prof.bio) container.append(el('p', { style: 'font-size:.88rem;color:var(--text-2);margin-bottom:14px' }, prof.bio));
 
+  // Location (privacy-respecting — only fields matching the OWNER's granularity).
+  // Migration 025 added location_granularity + location_* fields to user_public.
+  // Self can always see own location regardless of granularity setting.
+  if (prof.location_granularity && prof.location_granularity !== 'hidden') {
+    const loc = prof.location_formatted ||
+      [prof.location_city, prof.location_province, prof.location_country].filter(Boolean).join(', ');
+    if (loc) {
+      container.append(el('div', { class: 'profile-location', style: 'display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:.85rem;margin-bottom:12px' },
+        el('i', { class: 'fi fi-rs-map-marker', style: 'font-size:14px;opacity:0.8' }),
+        el('span', {}, loc)));
+    }
+  }
+
   const self = userId === me().id;
   if (self) {
     container.append(editProfileForm(prof, rp));
