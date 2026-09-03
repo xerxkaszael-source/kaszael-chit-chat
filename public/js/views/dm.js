@@ -8,12 +8,12 @@ import {
   sendDmMessage,
   editDmMessage,
   deleteDmMessage,
-  markDmRead,
   toggleDmReaction,
   fetchDmReactions,
   getDraft,
   setDraft
 } from '../lib/dm.js';
+import { queueReadMark as _rr_queueReadMark } from '../lib/read-receipts.js';
 import { state, me } from '../lib/state.js';
 import { el, ic, icBtn, esc, richText, fmtTime, fmtDay, relTime, debounce, uuid, toast, confirmModal } from '../lib/util.js';
 import { avatar } from '../lib/avatar.js';
@@ -33,7 +33,7 @@ let replyToMsg = null;
 let editingMsg = null;
 let visibleMsgIds = [];        // for reaction subscription filter
 let ownMsgIds = new Set();     // for read-receipt subscription filter
-let pendingReadMarks = new Set(); // debounced read-mark queue
+let pendingReadMarks = new Set(); // debounced read-mark queue (legacy in-file state; primary queue lives in lib/read-receipts.js)
 let readMarkTimer = null;
 
 // Short text reaction tokens (Flaticon UIcons policy: no emoji as UI icons).
@@ -550,33 +550,12 @@ function hideTypingIndicator() {
 }
 
 // ---- debounced batch read-mark ----
-// Per brief §13: do not write on every message — debounce/batch. Flush the
-// highest message_id in pendingReadMarks every 1.5s of viewing.
+// Delegates to lib/read-receipts.js for centralized queue + multi-tab reconcile.
+// Wraps the imported version so call sites (which pass only msgId) keep working
+// without having to thread currentConvId through every callsite.
 function queueReadMark(msgId) {
-  if (!msgId || !currentConvId) return;
-  pendingReadMarks.add(msgId);
-  clearTimeout(readMarkTimer);
-  readMarkTimer = setTimeout(flushReadMarks, 1500);
-}
-async function flushReadMarks() {
-  if (!pendingReadMarks.size || !currentConvId) return;
-  const ids = [...pendingReadMarks];
-  pendingReadMarks.clear();
-  // pick the latest message by created_at — that's our "through" mark
-  let highest = null, highestTs = -1;
-  for (const id of ids) {
-    const m = dmMessages.find(x => x.id === id);
-    const ts = m ? new Date(m.created_at).getTime() : 0;
-    if (ts > highestTs) { highestTs = ts; highest = id; }
-  }
-  if (!highest) return;
-  try {
-    await markDmRead(currentConvId, highest);
-    // multi-tab: broadcast claim so other tabs don't re-fire the same RPC
-    try { localStorage.setItem(`chc:dm:read:${currentConvId}`, JSON.stringify({ id: highest, at: Date.now() })); } catch {}
-  } catch {
-    for (const id of ids) pendingReadMarks.add(id);
-  }
+  if (!currentConvId || !msgId) return;
+  _rr_queueReadMark(currentConvId, msgId);
 }
 
 export function cleanupDmRealtime() {
