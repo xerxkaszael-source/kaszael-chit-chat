@@ -9,7 +9,8 @@ import { renderAuth } from './views/auth.js';
 import { renderShell } from './views/shell.js';
 import { openDm, cleanupDmRealtime } from './views/dm.js';
 import { renderNotifications } from './views/notifications.js';
-import { renderCallView, resetCallUI } from './views/call.js';
+import { renderCallView } from './views/call.js';
+import { mountCallManager, resetCallUI as resetCallManagerUI } from './lib/call-manager.js';
 import { renderLocationSettings } from './views/location-settings.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
@@ -87,6 +88,12 @@ async function enterApp() {
   entered = true;
   ROOT.innerHTML = '';
   renderShell(ROOT);
+  // Mount the GLOBAL call manager BEFORE presence/realtime so the
+  // postgres_changes subscription on `calls` is active as soon as the user
+  // is signed in. Incoming-call UI + floating active-call bubble are owned
+  // by this module — they survive view changes (/chat, /dm, /owner/...,
+  // /notifications) and only render into document.body.
+  try { mountCallManager(); } catch (e) { console.error('[chc] call manager mount failed', e); }
   // Start presence manager BEFORE realtime so heartbeat picks up chosen status.
   startPresence();
   try {
@@ -166,7 +173,7 @@ subscribe((topic) => {
   if (topic === 'kicked-banned') {
     // heartbeat told us we're kicked/banned → force back to auth
     stopRealtime();
-    try { resetCallUI(); } catch {}
+    try { resetCallManagerUI(); } catch {}
     entered = false;
     sb.auth.signOut().finally(() => location.reload());
   }
