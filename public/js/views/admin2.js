@@ -88,7 +88,7 @@ function loadChatMgmt(holder) {
 
   // === purge by age ===
   const ageCard = el('div', { class: 'danger-zone' },
-    el('h3', { style: 'margin:0 0 8px' }, ic('broom'), ' Purge messages by age'));
+    el('h3', { style: 'margin:0 0 8px' }, ic('broom-ball'), ' Purge messages by age'));
   holder.append(ageCard);
   const ageInput = el('input', { type: 'number', min: 1, value: 7, style: 'width:90px;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:8px;color:var(--text-1)' });
   const ageUnit = el('select', { style: 'padding:6px 10px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:8px;color:var(--text-1)' },
@@ -109,7 +109,7 @@ function loadChatMgmt(holder) {
 
   // === purge all ===
   const allCard = el('div', { class: 'danger-zone' },
-    el('h3', { style: 'margin:0 0 8px' }, ic('fire'), ' Purge ALL chat history'));
+    el('h3', { style: 'margin:0 0 8px' }, ic('fire-flame-simple'), ' Purge ALL chat history'));
   holder.append(allCard);
   allCard.append(el('p', { class: 'muted', style: 'margin-bottom:10px' },
     'Delete EVERY message from the General room. This cannot be undone.'));
@@ -122,11 +122,11 @@ function loadChatMgmt(holder) {
       loadChatMgmt(holder);
     } catch (e) { toast(e.chc?.text || e.message || 'Purge failed', 'error'); }
     ev.target.disabled = false;
-  } }, ic('fire'), ' Purge everything'));
+  } }, ic('fire-flame-simple'), ' Purge everything'));
 
   // === archive-only ===
   const archCard = el('div', {},
-    el('h3', { style: 'margin:0 0 8px' }, ic('box-archive'), ' Archive messages'));
+    el('h3', { style: 'margin:0 0 8px' }, ic('folder-archive'), ' Archive messages'));
   holder.append(archCard);
   archCard.append(el('p', { class: 'muted', style: 'margin-bottom:10px' },
     'Soft-archive: hide messages older than the threshold from the live chat without deleting them. Owner can restore later.'));
@@ -145,7 +145,7 @@ function loadChatMgmt(holder) {
       loadChatMgmt(holder);
     } catch (e) { toast(e.chc?.text || e.message || 'Archive failed', 'error'); }
     ev.target.disabled = false;
-  } }, ic('box-archive'), ' Archive'));
+  } }, ic('folder-archive'), ' Archive'));
 
   // restore (owner convenience)
   archCard.append(el('button', { class: 'btn sm ghost', style: 'margin-left:8px', onclick: async (ev) => {

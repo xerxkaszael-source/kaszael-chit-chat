@@ -263,7 +263,7 @@ function renderProfileBody(container, prof, pres, userId, rp) {
         if (!await confirmModal({ title: 'Unfriend ' + prof.display_name + '?', text: 'They will be removed from your friends list. You can send a new request later.', confirmLabel: 'Unfriend', danger: true })) return;
         try { await rpc('friend_remove', { other_id: prof.id }); toast('Unfriended', 'ok'); await rebuild(); }
         catch (e) { toast(e.chc?.text || 'Unfriend failed', 'error'); }
-      } }, ic('user-times'), 'Unfriend'));
+      } }, ic('user-xmark'), 'Unfriend'));
     }
     // blocked_by_me / blocks_me → no friend actions
 

@@ -570,6 +570,7 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
   background: var(--bg-1);
 }
 .dm-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dm-call-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .dm-name { color: var(--text-1); font-weight: 600; font-size: 15px; }
 .dm-sub { color: var(--text-3); font-size: 12px; }
 .dm-body {

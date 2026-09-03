@@ -150,14 +150,16 @@ function drawShell() {
       el('div', { class: 'dm-title' },
         el('div', { class: 'dm-name' }, other.display_name || other.username),
         el('div', { class: 'dm-sub' }, `@${other.username}`)),
+      // Spacer pushes call buttons to the top right of the header.
+      el('div', { class: 'topbar-spacer' }),
       // Call buttons (voice + video). Use hash routing /call/<type>/<userId>.
-      icBtn('phone', 'Voice call', () => {
-        location.hash = '/call/audio/' + currentOtherId;
-      }),
-      icBtn('video', 'Video call', () => {
-        location.hash = '/call/video/' + currentOtherId;
-      }),
-      el('div', { class: 'topbar-spacer' })),
+      el('div', { class: 'dm-call-actions' },
+        icBtn('phone-call', 'Voice call', () => {
+          location.hash = '/call/audio/' + currentOtherId;
+        }),
+        icBtn('video-camera', 'Video call', () => {
+          location.hash = '/call/video/' + currentOtherId;
+        }))),
     el('div', { class: 'dm-body', id: 'dm-body' },
       el('div', { class: 'skeleton-row' }, 'Loading messages…')),
     el('div', { class: 'dm-composer', id: 'dm-composer' }));
@@ -244,9 +246,9 @@ function reactionRow(msgId) {
 function messageActions(m, mine) {
   const wrap = el('div', { class: 'dm-actions' });
   // reactions
-  const reactBtn = el('button', { class: 'dm-act', onclick: e => showReactionPicker(e, m.id) }, ic('smile'));
+  const reactBtn = el('button', { class: 'dm-act', onclick: e => showReactionPicker(e, m.id) }, ic('smile-beam'));
   wrap.append(reactBtn);
-  wrap.append(el('button', { class: 'dm-act', onclick: () => setReplyTo(m) }, ic('reply')));
+  wrap.append(el('button', { class: 'dm-act', onclick: () => setReplyTo(m) }, ic('reply-all')));
   if (mine) {
     wrap.append(el('button', { class: 'dm-act', onclick: () => setEdit(m) }, ic('edit')));
     wrap.append(el('button', { class: 'dm-act danger', onclick: () => doDelete(m) }, ic('trash')));
@@ -312,7 +314,7 @@ function updateComposerHints() {
   bar.innerHTML = '';
   if (replyToMsg) {
     bar.append(el('div', { class: 'composer-hint reply' },
-      ic('reply'),
+      ic('reply-all'),
       el('span', {}, `Replying to: ${replyToMsg.content.slice(0, 50)}${replyToMsg.content.length > 50 ? '…' : ''}`),
       el('button', { onclick: () => { replyToMsg = null; updateComposerHints(); }, class: 'icon-btn' }, ic('cross'))));
   }

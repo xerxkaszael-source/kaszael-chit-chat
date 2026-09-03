@@ -152,7 +152,7 @@ function renderActiveList(body) {
   const a = getActive();
   if (!a) {
     body.append(el('div', { class: 'empty-state' },
-      el('div', { class: 'empty-icon' }, ic('phone')),
+      el('div', { class: 'empty-icon' }, ic('phone-call')),
       el('h3', {}, 'No active call'),
       el('p', {}, 'Start a call from a friend\u2019s profile or DM.')));
     return;
@@ -176,7 +176,7 @@ async function renderHistory(body) {
   }
   if (!historyRows.length) {
     body.append(el('div', { class: 'empty-state' },
-      el('div', { class: 'empty-icon' }, ic('clock-rotate-right')),
+      el('div', { class: 'empty-icon' }, ic('time-past')),
       el('h3', {}, 'No call history'),
       el('p', {}, 'Calls you make or receive will appear here.')));
     return;
@@ -223,7 +223,7 @@ function renderIncoming() {
       el('div', { class: 'call-incoming-name' }, other.display_name || other.username || 'Unknown'),
       el('div', { class: 'call-incoming-actions' },
         el('button', { class: 'btn danger large', onclick: () => doDecline() }, ic('phone-slash'), ' Decline'),
-        el('button', { class: 'btn primary large', onclick: () => doAccept() }, ic('phone'), ' Accept'))));
+        el('button', { class: 'btn primary large', onclick: () => doAccept() }, ic('phone-call'), ' Accept'))));
   document.body.append(modal);
 }
 
@@ -271,7 +271,7 @@ function renderActive() {
     el('div', { class: 'call-active-state' }, a.state),
     el('div', { class: 'call-active-controls' },
       el('button', { class: 'call-ctrl', title: 'Toggle mic', onclick: () => toggleMic() }, ic('microphone')),
-      a.kind === 'video' ? el('button', { class: 'call-ctrl', title: 'Toggle camera', onclick: () => toggleCam() }, ic('video')) : null,
+      a.kind === 'video' ? el('button', { class: 'call-ctrl', title: 'Toggle camera', onclick: () => toggleCam() }, ic('video-camera')) : null,
       el('button', { class: 'call-ctrl danger', title: 'Hang up', onclick: () => hangup() }, ic('phone-slash'))));
   document.body.append(panelEl);
 }

@@ -45,7 +45,7 @@ function buildShell() {
       el('div', { class: 'room-sub', id: 'room-sub' }, 'the one room where everyone gathers')),
     el('div', { class: 'topbar-spacer' }),
     connPill,
-    icBtn('magnifying-glass', 'Search messages', () => openSearch()),
+    icBtn('magnifying-glass-binary', 'Search messages', () => openSearch()),
     notifBtn(),
     icBtn('users', 'Friends', () => openFriends()),
     icBtn('thumbtack', 'Pinned', () => openPins()),
