@@ -33,7 +33,7 @@ KEY_LEN=$(grep -o 'anonKey: "[^"]*"' "$BUILD_DIR/js/config.js" | sed 's/anonKey:
 echo "config injected (anon key length: $((KEY_LEN-1)))"
 
 # 5. zip + Netlify deploy (create site on first run)
-SITE_NAME="kaszael-chit-chat"
+SITE_NAME="kaszael-chat"
 cd "$BUILD_DIR"
 python3 - <<'PY'
 import zipfile, os
