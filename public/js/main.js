@@ -8,9 +8,11 @@ import { rpc } from './lib/db.js';
 import { renderAuth } from './views/auth.js';
 import { renderShell } from './views/shell.js';
 import { openDm, cleanupDmRealtime } from './views/dm.js';
+import { renderNotifications } from './views/notifications.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
 import { loadInbox } from './lib/dm.js';
+import { start as startPresence } from './lib/presence.js';
 
 applyTheme();
 watchSystemTheme();
@@ -70,6 +72,8 @@ async function enterApp() {
   entered = true;
   ROOT.innerHTML = '';
   renderShell(ROOT);
+  // Start presence manager BEFORE realtime so heartbeat picks up chosen status.
+  startPresence();
   try {
     await startRealtime();
   } catch (e) {
@@ -105,6 +109,10 @@ function route() {
   if (view === 'dm' && rest[0]) {
     // /dm/<userId>
     openDm(rest[0]);
+    return;
+  }
+  if (view === 'notifications') {
+    renderNotifications(ROOT.querySelector('.main') || ROOT);
     return;
   }
   renderShell(ROOT, view);

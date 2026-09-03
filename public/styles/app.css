@@ -693,6 +693,59 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 }
 
 /* ============================================================
+   Notification center view (Phase 4c)
+   ============================================================ */
+.notif-view { display: flex; flex-direction: column; height: 100%; }
+.notif-view .head-actions { margin-left: auto; }
+.notif-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-m, 8px);
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s;
+}
+.notif-row:hover { background: var(--bg-2, rgba(255,255,255,0.04)); }
+.notif-row.unread { background: var(--bg-2, rgba(255,255,255,0.04)); }
+.notif-row.unread .notif-line1 { font-weight: 600; }
+.notif-icon {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-3, rgba(255,255,255,0.06));
+  color: var(--text-2, #aaa);
+  flex-shrink: 0;
+}
+.notif-row.unread .notif-icon { color: var(--accent, #4a9eff); }
+.notif-meta {
+  flex: 1;
+  min-width: 0;
+}
+.notif-line1 {
+  font-size: 14px;
+  color: var(--text-1, #ddd);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notif-time {
+  font-size: 11px;
+  color: var(--text-3, #888);
+}
+
+/* ============================================================
    DM view — typing indicator (Phase 4a)
    ============================================================ */
 .dm-typing {

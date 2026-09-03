@@ -3,6 +3,7 @@
 import { sb, GENERAL_ROOM, rpc } from './db.js';
 import { state, notify, profileOf, insertMessage, patchMessage } from './state.js';
 import { playMessageSound, playMentionSound, playBroadcastSound } from './sound.js';
+import { getStatus, getLastActivityWrite } from './presence.js';
 
 let subMessages = null, subReactions = null, subPins = null, subBroadcasts = null;
 let presenceChannel = null, typingChannel = null;
@@ -49,10 +50,18 @@ function onMessageEvent(payload) {
 }
 
 // ---- presence heartbeat (DB-backed; sweep lives inside RPC) ----
+// Per brief §27: heartbeat carries the user's chosen status + last-activity timestamp.
+// The server-side sweep in migration 018 promotes online→away after 5min idle.
 async function beat() {
   if (destroyed || !state.session) return;
   try {
-    await rpc('presence_heartbeat', { session_id: state.session.access_token.slice(0, 12) });
+    const status = getStatus() || 'online';
+    const last = getLastActivityWrite() || Date.now();
+    await rpc('presence_heartbeat', {
+      session_id: state.session.access_token.slice(0, 12),
+      v_status: status,
+      v_activity: new Date(last).toISOString()
+    });
     setConnState('online');
   } catch (e) {
     const code = e.chc?.code;
@@ -140,14 +149,18 @@ export async function startRealtime() {
   } catch (e) { console.error('[chc] broadcasts channel failed', e); }
 
   try {
+    // Skip realtime presence entirely when user is invisible — we still keep DB
+    // heartbeat so owner analytics work, but other clients won't see this session
+    // in presence sync. Per brief §27: presence flicker prevention.
+    const initialStatus = getStatus() || 'online';
     presenceChannel = sb.channel('presence-room', { config: { presence: { key: state.profile?.id || 'anon' } } })
       .on('presence', { event: 'sync' }, () => {
         state.presenceFromRealtime = presenceChannel.presenceState();
         notify('presence');
       })
       .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now() }); } catch {}
+        if (status === 'SUBSCRIBED' && initialStatus !== 'invisible') {
+          try { await presenceChannel.track({ uid: state.profile?.id, at: Date.now(), status: initialStatus }); } catch {}
         }
       });
   } catch (e) { console.error('[chc] presence channel failed', e); }
