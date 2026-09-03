@@ -2,9 +2,9 @@
 // One subscription per channel; explicit cleanup on logout; reconnect-safe.
 import { sb, GENERAL_ROOM, rpc } from './db.js';
 import { state, notify, profileOf, insertMessage, patchMessage } from './state.js';
-import { playMessageSound, playMentionSound, playBroadcastSound } from './sound.js';
+import { playMessageSound, playMentionSound, playBroadcastSound, playDmSound } from './sound.js';
 import { getStatus } from './presence.js';
-import { bumpUnread, refreshUnread } from './notifications.js';
+import { bumpUnread, refreshUnread, bumpUnreadDm, refreshDmUnread } from './notifications.js';
 
 let subMessages = null, subReactions = null, subPins = null, subBroadcasts = null;
 let presenceChannel = null, typingChannel = null;
@@ -182,6 +182,29 @@ export async function startRealtime() {
       .on('broadcast', { event: 'typing_stop' }, onTypingEvent)
       .subscribe();
   } catch (e) { console.error('[chc] typing channel failed', e); }
+
+  try {
+    // Global DM inbox subscription — fires when any DM arrives in a conversation
+    // we're a member of (RLS filter on direct_messages handles authorization).
+    // Triggers: green-dot on sidebar Inbox + DM sound + browser notification.
+    // Per-conversation subscription in views/dm.js handles message display.
+    sb.channel('db-dm-inbox')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'direct_messages' }, (payload) => {
+        const m = payload?.new;
+        if (!m || m.sender_id === state.profile?.id) return; // skip own
+        bumpUnreadDm();
+        playDmSound();
+        if (document.hidden) {
+          const sender = state.profiles.get(m.sender_id);
+          try {
+            if (typeof Notification !== 'undefined') {
+              new Notification(`DM from ${sender?.display_name || 'someone'}`, { body: m.content?.slice(0, 100) });
+            }
+          } catch {}
+        }
+      })
+      .subscribe();
+  } catch (e) { console.error('[chc] dm-inbox channel failed', e); }
 
   // connection lifecycle
   sb.realtime.onStateChange((s) => {

@@ -1,6 +1,6 @@
 // panels.js — right panel + modals: friends, notifications, pins, search, profile, report
 import { rpc, from } from '../lib/db.js';
-import { state, me, myLevel, roleLevel, isMemberPlus } from '../lib/state.js';
+import { state, me, myLevel, roleLevel, isMemberPlus, canModerate } from '../lib/state.js';
 import { el, ic, toast, modal, confirmModal, relTime, fmtTime } from '../lib/util.js';
 import { avatar, badge } from '../lib/avatar.js';
 
@@ -209,6 +209,15 @@ function renderProfileBody(container, prof, pres, userId, rp) {
         console.warn('[chc] profile rebuild failed', e);
       }
     };
+
+    // Staff (owner/admin/mod/helper) can Message anyone regardless of friendship.
+    // _dm_allowed() grants 'ok' to staff regardless of friendship status.
+    if (canModerate() && !prof.is_guest && fs !== 'accepted' && fs !== 'pending_in' && fs !== 'pending_out') {
+      actionRow.append(el('button', { class: 'btn sm primary', onclick: () => {
+        rp.close();
+        location.hash = '/dm/' + prof.id;
+      } }, ic('envelope'), 'Message'));
+    }
 
     if (fs === 'none') {
       actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {

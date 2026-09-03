@@ -23,13 +23,24 @@ function tone(freq, t0, dur, type = 'sine', gain = 0.08) {
 export function setSoundEnabled(v) { enabled = !!v; }
 export function soundEnabled() { return enabled; }
 
-// pleasant two-tone "pop" for incoming messages
+// pleasant two-tone "pop" for incoming chat messages
 export function playMessageSound() {
   if (!enabled) return;
   try {
     tone(880, 0, 0.12, 'sine', 0.06);
     tone(1318.5, 0.07, 0.16, 'sine', 0.045);
   } catch { /* audio blocked until first gesture — ignore */ }
+}
+
+// Distinct three-tone "knock" for incoming private DMs (so user knows it's DM,
+// not a general chat message). Higher pitch than mention so it's not confused.
+export function playDmSound() {
+  if (!enabled) return;
+  try {
+    tone(987.77, 0, 0.10, 'sine', 0.06);
+    tone(1318.5, 0.08, 0.12, 'sine', 0.05);
+    tone(1567.98, 0.18, 0.18, 'sine', 0.045);
+  } catch {}
 }
 
 export function playMentionSound() {

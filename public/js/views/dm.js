@@ -14,6 +14,7 @@ import {
   setDraft
 } from '../lib/dm.js';
 import { queueReadMark as _rr_queueReadMark } from '../lib/read-receipts.js';
+import { refreshDmUnread } from '../lib/notifications.js';
 import { state, me } from '../lib/state.js';
 import { el, ic, icBtn, esc, richText, fmtTime, fmtDay, relTime, debounce, uuid, toast, confirmModal } from '../lib/util.js';
 import { avatar } from '../lib/avatar.js';
@@ -54,6 +55,15 @@ const TOKEN_LABEL = Object.fromEntries(EMOJI_OPTIONS.map(o => [o.token, o.label]
 function tokenToLabel(token) { return TOKEN_LABEL[token] || token; }
 
 export async function openDm(otherId, convId = null) {
+  // Defensive parameter swap recovery.
+  // Some callers (notably inbox.js — previously bugged) passed (convId, otherId)
+  // which made the function treat a conversation UUID as a user id and vice versa,
+  // leading to dm_list returning 'not_member' when opening an inbox row.
+  // Detect the swap: if otherId looks like a UUID but isn't in profiles, AND
+  // convId looks like a UUID that DOES exist as a conversation, swap them.
+  if (otherId && convId && await looksLikeSwappedDmArgs(otherId, convId)) {
+    [otherId, convId] = [convId, otherId];
+  }
   currentOtherId = otherId;
   try {
     if (!convId) {
@@ -67,9 +77,37 @@ export async function openDm(otherId, convId = null) {
 
   // fetch other user profile (cached in state.profiles, hydrate sender on realtime too)
   await ensureProfile(otherId);
+  // Refresh inbox unread — opening a DM may have just decremented the count via read-marks
+  refreshDmUnread().catch(() => {});
   currentOtherProfile = state.profiles.get(otherId) || { id: otherId, username: 'unknown', display_name: 'Unknown', avatar_color: '#888' };
 
   await renderDmView();
+}
+
+// Quick check: does `first` look like a UUID present as a conversation,
+// while `second` is a UUID present as a profile? If yes, the caller
+// probably swapped the args. Caches result for the same pair for 30s to avoid
+// repeated profile/conversation lookups during rapid clicks.
+const _swapCheckCache = new Map();
+async function looksLikeSwappedDmArgs(first, second) {
+  if (!first || !second) return false;
+  const uuidLike = (s) => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+  if (!uuidLike(first) || !uuidLike(second)) return false;
+  const key = first + '|' + second;
+  const cached = _swapCheckCache.get(key);
+  if (cached && Date.now() - cached.t < 30000) return cached.v;
+  try {
+    // Cheap probe: count rows in each table
+    const [{ count: profileRows }, { count: convRows }] = await Promise.all([
+      sb.from('profiles').select('id', { count: 'exact', head: true }).eq('id', first),
+      sb.from('conversations').select('id', { count: 'exact', head: true }).eq('id', first)
+    ]);
+    const swap = profileRows === 0 && convRows > 0;
+    _swapCheckCache.set(key, { v: swap, t: Date.now() });
+    return swap;
+  } catch {
+    return false;
+  }
 }
 
 export async function renderDmView() {

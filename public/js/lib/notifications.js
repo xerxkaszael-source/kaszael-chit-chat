@@ -34,6 +34,26 @@ export async function unreadCount() {
   }
 }
 
+// ---- DM unread tracking (for inbox green-dot + count badge) ----
+export async function refreshDmUnread() {
+  try {
+    const r = await rpc('inbox_list');
+    const convs = r?.conversations || [];
+    const total = convs.reduce((s, c) => s + (c.unread_count || 0), 0);
+    state.dmUnreadTotal = total;
+    state.dmInbox = convs;
+    notify('inbox');
+    return total;
+  } catch {
+    return state.dmUnreadTotal || 0;
+  }
+}
+
+export function bumpUnreadDm() {
+  state.dmUnreadTotal = (state.dmUnreadTotal || 0) + 1;
+  notify('inbox');
+}
+
 // ---- unread count tracking ----
 export function computeUnread(rows) {
   return (rows || []).filter(r => !r.read).length;

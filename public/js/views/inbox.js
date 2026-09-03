@@ -77,7 +77,10 @@ function inboxRow(c) {
   const row = el('button', {
     class: `inbox-row${unread > 0 ? ' unread' : ''}${muted ? ' muted' : ''}${archived ? ' archived' : ''}${otherLeft ? ' left' : ''}`,
     // Disable click if we have no other_user_id at all (member row was hard-deleted)
-    onclick: otherId ? () => openDm(c.conversation_id, otherId) : null
+    // openDm signature: openDm(otherId, convId = null). inboxRow passes both, in the right order.
+    // (Previous bug: passed (convId, otherId) — caused dm_list to query conversation_id = otherId,
+    //  which has no row in conversation_members, returning 'not_member'.)
+    onclick: otherId ? () => openDm(otherId, c.conversation_id) : null
   },
     avatar({ id: otherId, username: c.other_username, display_name: c.other_display_name, avatar_color: c.other_avatar_color }, { size: 'md', showPresence: !otherLeft }),
     el('div', { class: 'inbox-meta' },

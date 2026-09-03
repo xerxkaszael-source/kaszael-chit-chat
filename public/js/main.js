@@ -14,6 +14,7 @@ import { renderLocationSettings } from './views/location-settings.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
 import { loadInbox } from './lib/dm.js';
+import { refreshDmUnread } from './lib/notifications.js';
 import { start as startPresence } from './lib/presence.js';
 
 applyTheme();
@@ -81,11 +82,12 @@ async function enterApp() {
   } catch (e) {
     console.error('[chc] realtime start failed', e);
   }
-  // Preload DM unread count in background
+  // Preload DM unread count in background (also drives the green-dot on inbox)
   loadInbox().then(convs => {
     state.dmInbox = convs || [];
     state.dmUnreadTotal = (convs || []).reduce((s, c) => s + (c.unread_count || 0), 0);
     notify('route'); // re-sync badges
+    notify('inbox'); // also notify the new 'inbox' topic so the green-dot subscribes
   }).catch(() => {});
   if (state.flags.kicked) notify('kicked-banned');
   route();
