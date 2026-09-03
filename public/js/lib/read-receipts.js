@@ -108,3 +108,22 @@ export function resetReadReceipts() {
   timers.clear();
   remoteClaims.clear();
 }
+
+// ---- synchronous flush ----
+// Flush ALL pending read-marks for a given conversation immediately, skipping
+// the 1.5s debounce. Called when leaving a DM so the server learns the user
+// saw the messages (and the inbox unread count decrements) before the next
+// inbox render.
+export async function flushNow(convId) {
+  if (convId) {
+    const t = timers.get(convId);
+    if (t) { clearTimeout(t); timers.delete(convId); }
+    await flush(convId);
+    return;
+  }
+  // No convId → flush everything
+  for (const [cid, t] of timers.entries()) { clearTimeout(t); timers.delete(cid); }
+  for (const cid of [...pending.keys()]) {
+    await flush(cid);
+  }
+}

@@ -104,14 +104,20 @@ function ensureStateSubs() {
 }
 
 export async function renderCallView(mainEl, sub = 'inbox', callKind = null, calleeId = null) {
+  // Clear the main area FIRST so navigating from /call/inbox → /call/history
+  // (or any other route → /call/...) replaces the view instead of appending a
+  // duplicate "Call history / Active / History / Loading…" stack. Previous
+  // behavior left each rendered .call-view in the DOM, growing the page on
+  // every navigation and showing multiple "Loading…" placeholders.
+  mainEl.innerHTML = '';
   viewEl = el('div', { class: 'call-view' },
     el('div', { class: 'view-head' },
       el('h2', {}, sub === 'history' ? 'Call history' : 'Calls'),
       el('div', { class: 'head-tabs' },
         el('button', { class: `tab${sub === 'inbox' ? ' active' : ''}`, onclick: () => location.hash = '/call' }, 'Active'),
-        el('button', { class: `tab${sub === 'history' ? ' active' : ''}`, onclick: () => location.hash = '/call/history' }, 'History'))),
-    el('div', { class: 'call-body', id: 'call-body' },
-      el('div', { class: 'skeleton-row' }, 'Loading…')));
+        el('button', { class: `tab${sub === 'history' ? ' active' : ''}`, onclick: () => location.hash = '/call/history' }, 'History')),
+      el('div', { class: 'call-body', id: 'call-body' },
+        el('div', { class: 'skeleton-row' }, 'Loading…'))));
   mainEl.append(viewEl);
   ensureStateSubs();
   ensureCallerSubscription();
@@ -123,7 +129,7 @@ export async function renderCallView(mainEl, sub = 'inbox', callKind = null, cal
 
   // Auto-initiate when route is /call/audio/<userId> or /call/video/<userId>.
   // Skipped when there is already an active call to avoid duplicate notifications.
-  if (callKind && calleeId && (callKind === 'audio' || callKind === 'video')) {
+  if (callKind && calleeId && (callKind === 'voice' || callKind === 'video')) {
     try {
       if (!getActive()) {
         const r = await initiate(calleeId, callKind);

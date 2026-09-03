@@ -185,13 +185,16 @@ function renderProfileBody(container, prof, pres, userId, rp) {
 
   // Location (privacy-respecting — only fields matching the OWNER's granularity).
   // Migration 025 added location_granularity + location_* fields to user_public.
-  // Self can always see own location regardless of granularity setting.
-  if (prof.location_granularity && prof.location_granularity !== 'hidden') {
+  // Self can always see own location regardless of granularity setting
+  // (the comment has been wrong since v1 — the actual condition used to block
+  //  the self-view of your own location if you ever set it to 'hidden').
+  const isSelf = userId === me().id;
+  if (prof.location_granularity && (prof.location_granularity !== 'hidden' || isSelf)) {
     const loc = prof.location_formatted ||
       [prof.location_city, prof.location_province, prof.location_country].filter(Boolean).join(', ');
     if (loc) {
-      container.append(el('div', { class: 'profile-location', style: 'display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:.85rem;margin-bottom:12px' },
-        el('i', { class: 'fi fi-rs-map-marker', style: 'font-size:14px;opacity:0.8' }),
+      container.append(el('div', { class: 'profile-location', style: 'display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:.88rem;margin-bottom:12px' },
+        ic('map-pin'),  // 16px by default — readable at location-row size
         el('span', {}, loc)));
     }
   }

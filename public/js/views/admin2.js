@@ -47,11 +47,13 @@ export async function ownerView(main, sub = null) {
   main.append(content);
   const validTabs = ['roles', 'chat', 'users'];
   let active = validTabs.includes(sub) ? sub : 'roles';
-  const tabs = el('div', { style: 'display:flex;gap:8px;margin:14px 0' },
-    sectionTab('Role management', 'roles', setActive),
-    sectionTab('Chat management', 'chat', setActive),
-    sectionTab('User management', 'users', setActive));
+
+  // Build tabs BEFORE setActive (previous bug: tabs referenced inside
+  // setActive while still in TDZ → ReferenceError on first render → tab
+  // clicks silently failed and content stayed on the first tab).
+  const tabs = el('div', { style: 'display:flex;gap:8px;margin:14px 0' });
   main.insertBefore(tabs, content);
+
   function setActive(name, pushHash = true) {
     active = name;
     [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -63,6 +65,10 @@ export async function ownerView(main, sub = null) {
       location.hash = '/owner/' + name;
     }
   }
+  tabs.append(
+    sectionTab('Role management', 'roles', setActive),
+    sectionTab('Chat management', 'chat', setActive),
+    sectionTab('User management', 'users', setActive));
   setActive(active, false);
 }
 

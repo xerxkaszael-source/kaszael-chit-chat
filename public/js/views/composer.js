@@ -192,33 +192,39 @@ export function renderComposer() {
   return wrap;
 }
 
-// ---- text-label quick reactions (Flaticon UIcons policy: no emoji icons) ----
-// Users can still TYPE emoji in the message body; this picker is for
-// quick-insert of common emoticons as text (not as UI icons).
-const QUICK_REACTIONS = [
-  { label: '+1',    text: '👍' },
-  { label: 'haha',  text: '😄' },
-  { label: 'love',  text: '❤️' },
-  { label: 'wow',   text: '😮' },
-  { label: 'sad',   text: '😢' },
-  { label: 'fire',  text: '🔥' },
-  { label: 'party', text: '🎉' },
-  { label: 'think', text: '🤔' }
+// ---- emoji quick-picker (Unicode glyphs, not text labels) ----
+// Each button inserts the real emoticon into the input — same UX as
+// reactions picker (dm.js / message.js). Labels are kept only for aria/tooltip.
+const QUICK_EMOJI = [
+  { glyph: '👍', label: 'thumbs up' },
+  { glyph: '😄', label: 'laugh' },
+  { glyph: '❤️', label: 'love' },
+  { glyph: '😮', label: 'surprised' },
+  { glyph: '😢', label: 'sad' },
+  { glyph: '🔥', label: 'fire' },
+  { glyph: '🎉', label: 'party' },
+  { glyph: '👏', label: 'clap' }
 ];
 function openEmoji(input) {
   const pop = document.createElement('div');
   pop.className = 'modal-backdrop';
   const panel = el('div', { class: 'modal', style: 'max-width:320px' },
-    el('div', { class: 'modal-body', style: 'display:flex;flex-wrap:wrap;gap:6px' },
-      QUICK_REACTIONS.map(r => el('button', {
-        class: 'btn ghost',
-        style: 'padding:6px 10px',
+    el('div', { class: 'modal-body', style: 'display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:8px' },
+      QUICK_EMOJI.map(r => el('button', {
+        class: 'reaction-pick',     // reuses the 36×36 emoji button style from CSS
         title: r.label,
         'aria-label': `Insert ${r.label}`,
         onclick: () => {
-          input.value += r.text; input.dispatchEvent(new Event('input')); pop.remove(); input.focus();
+          // Insert at caret position (not just append) so user can drop emoji mid-sentence.
+          const start = input.selectionStart ?? input.value.length;
+          const end = input.selectionEnd ?? input.value.length;
+          input.value = input.value.slice(0, start) + r.glyph + input.value.slice(end);
+          input.selectionStart = input.selectionEnd = start + r.glyph.length;
+          input.dispatchEvent(new Event('input'));
+          pop.remove();
+          input.focus();
         }
-      }, r.label))));
+      }, r.glyph))));
   pop.addEventListener('click', (ev) => { if (ev.target === pop) pop.remove(); });
   pop.append(panel);
   document.getElementById('modals').append(pop);

@@ -100,8 +100,11 @@ function route() {
   const h = location.hash.replace(/^#\/?/, '') || 'chat';
   const [view, ...rest] = h.split('/');
   notify('route');
-  // cleanup any open DM realtime when leaving
-  if (view !== 'dm') cleanupDmRealtime();
+  // cleanup any open DM realtime when leaving. Async — we await the read-mark
+  // flush so the inbox badge reflects the new unread state immediately when
+  // the user navigates back. (Previously sync → read-marks stuck in the
+  // 1.5s debounce queue → inbox kept showing the old unread counter.)
+  if (view !== 'dm') cleanupDmRealtime().catch(() => {});
   const adminViews = new Set(['admin', 'moderation', 'broadcast', 'audit', 'system', 'owner']);
   if (adminViews.has(view)) {
     if (!state.profile || state.isGuest || !(isOwner() || ['admin', 'moderation', 'broadcast'].includes(view) && state.profile)) {
@@ -121,13 +124,17 @@ function route() {
     return;
   }
   if (view === 'call') {
-    // /call/<tab>           — call history/inbox (rest[0] = 'inbox'|'history')
-    // /call/audio/<userId>  — initiate voice call to userId
-    // /call/video/<userId>  — initiate video call to userId
+    // /call/<tab>             — call history/inbox (rest[0] = 'inbox'|'history')
+    // /call/voice/<userId>    — initiate voice call to userId
+    // /call/video/<userId>    — initiate video call to userId
+    // /call/audio/<userId>    — legacy alias for /call/voice/<userId> (was
+    //   sent by the DM header before the CHC:invalid_kind fix).
     let _sub = 'inbox', _kind = null, _callee = null;
-    if (rest[0] === 'audio' || rest[0] === 'video') {
-      // route is /call/<kind>/<userId> — no inbox/history tab
-      _kind = rest[0];
+    if (rest[0] === 'voice' || rest[0] === 'video' || rest[0] === 'audio') {
+      // route is /call/<kind>/<userId> — no inbox/history tab. 'audio' is
+      // coerced to 'voice' here so the DB's check (kind in ('voice','video'))
+      // accepts it.
+      _kind = rest[0] === 'audio' ? 'voice' : rest[0];
       _callee = rest[1] || null;
     } else {
       _sub = rest[0] || 'inbox';

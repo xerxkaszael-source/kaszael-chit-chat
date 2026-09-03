@@ -13,7 +13,7 @@ import {
   getDraft,
   setDraft
 } from '../lib/dm.js';
-import { queueReadMark as _rr_queueReadMark } from '../lib/read-receipts.js';
+import { queueReadMark as _rr_queueReadMark, flushNow as _rr_flushNow } from '../lib/read-receipts.js';
 import { refreshDmUnread } from '../lib/notifications.js';
 import { state, me } from '../lib/state.js';
 import { el, ic, icBtn, esc, richText, fmtTime, fmtDay, relTime, debounce, uuid, toast, confirmModal } from '../lib/util.js';
@@ -83,11 +83,18 @@ export async function openDm(otherId, convId = null) {
 
   // fetch other user profile (cached in state.profiles, hydrate sender on realtime too)
   await ensureProfile(otherId);
-  // Refresh inbox unread — opening a DM may have just decremented the count via read-marks
+  // Refresh inbox unread — opening a DM may have just decremented the count via read-marks.
+  // Defer until AFTER loadMessages so the read-marks have been queued (lib/read-receipts.js
+  // flushes 1.5s later). Then refresh again so the badge reflects the new read state.
   refreshDmUnread().catch(() => {});
   currentOtherProfile = state.profiles.get(otherId) || { id: otherId, username: 'unknown', display_name: 'Unknown', avatar_color: '#888' };
 
   await renderDmView();
+
+  // After the DM is open and read-marks are queued, refresh the inbox again so the
+  // green-dot / badge reflects the new unread state. Wait 1.8s to outlast the 1.5s
+  // debounce + RPC roundtrip inside lib/read-receipts.js.
+  setTimeout(() => refreshDmUnread().catch(() => {}), 1800);
 }
 
 // Quick check: does `first` look like a UUID present as a conversation,
@@ -158,14 +165,17 @@ function drawShell() {
         el('div', { class: 'dm-sub' }, `@${other.username}`)),
       // Spacer pushes call buttons to the top right of the header.
       el('div', { class: 'topbar-spacer' }),
-      // Call buttons (voice + video). Use hash routing /call/<type>/<userId>.
+      // Call buttons (voice + video). The DB stores kind as 'voice' or 'video'
+      // (see migration 019_calls.sql) — the route segment /call/audio/ used to
+      // mismatch, causing call_initiate to throw CHC:invalid_kind. Renamed to
+      // /call/voice/ so the call module sees 'voice' and the server accepts it.
       el('div', { class: 'dm-call-actions' },
         icBtn('phone-call', 'Voice call', () => {
-          location.hash = '/call/audio/' + currentOtherId;
+          location.hash = '/call/voice/' + currentOtherId;
         }),
         icBtn('video-camera', 'Video call', () => {
           location.hash = '/call/video/' + currentOtherId;
-        }))),
+        })),
     el('div', { class: 'dm-body', id: 'dm-body' },
       el('div', { class: 'skeleton-row' }, 'Loading messages…')),
     el('div', { class: 'dm-composer', id: 'dm-composer' }));
@@ -623,7 +633,15 @@ function queueReadMark(msgId) {
   _rr_queueReadMark(currentConvId, msgId);
 }
 
-export function cleanupDmRealtime() {
+export async function cleanupDmRealtime() {
+  // Flush any pending read-marks SYNCHRONOUSLY so the server records them as
+  // read BEFORE the user re-enters the inbox. Without this, navigating back
+  // to the inbox after reading a DM still shows the old unread counter for
+  // ~1.5s (the debounce window) and, worse, the read-mark can be lost if the
+  // page is refreshed before the debounce fires.
+  if (currentConvId) {
+    try { await _rr_flushNow(currentConvId); } catch {}
+  }
   for (const ref of [realtimeChannel, typingDmChannel, reactionsChannel, readsChannel]) {
     if (ref) {
       try { sb.removeChannel(ref); } catch {}
@@ -636,4 +654,10 @@ export function cleanupDmRealtime() {
   pendingReadMarks.clear();
   visibleMsgIds = [];
   ownMsgIds.clear();
+  // After flush completes, refresh the inbox badge so it reflects the
+  // now-decremented unread count.
+  try {
+    const { refreshDmUnread } = await import('../lib/notifications.js');
+    await refreshDmUnread();
+  } catch {}
 }

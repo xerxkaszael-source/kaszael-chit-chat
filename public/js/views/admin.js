@@ -61,6 +61,13 @@ async function moderationView(main, sub = null) {
   const validTabs = ['reports', 'states', 'lookup'];
   let active = validTabs.includes(sub) ? sub : 'reports';
 
+  // Build tabs BEFORE setActive so the function can querySelector on them
+  // (previous bug: tabs was referenced inside setActive while still in TDZ,
+  //  throwing ReferenceError → first tab render failed → user clicks had
+  //  no effect and the panel looked "stuck" on the first tab).
+  const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px' });
+  main.insertBefore(tabs, content);
+
   function setActive(name, pushHash = true) {
     active = name;
     [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -75,11 +82,11 @@ async function moderationView(main, sub = null) {
       location.hash = '/moderation/' + name;
     }
   }
-  const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:14px' },
+  // Append tab buttons NOW that setActive + tabs both exist.
+  tabs.append(
     tabBtn('Reports', 'reports', setActive),
     tabBtn('Active mutes & bans', 'states', setActive),
     tabBtn('User lookup', 'lookup', setActive));
-  main.insertBefore(tabs, content);
   setActive(active, false);
 }
 
