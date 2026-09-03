@@ -957,6 +957,42 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scale-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+/* ============================================================
+   "Stale call" banner — surfaces when the user has an abandoned
+   call row on the server (older than 60s in calling/ringing or
+   120s in reconnecting). The user can Clear it (single-click
+   cleanup) or Dismiss (ignore, but next call will hit busy-check).
+   ============================================================ */
+.call-stale-banner {
+  position: fixed; top: calc(var(--topbar-h, 52px) + 8px); left: 50%;
+  transform: translateX(-50%); z-index: 1100;
+  background: var(--bg-1, #1a1a1a);
+  border: 1px solid var(--warning, #f59e0b);
+  border-left-width: 4px;
+  border-radius: var(--radius-m, 12px);
+  padding: 12px 16px;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  max-width: min(92vw, 560px);
+  width: max-content;
+  animation: scale-in .2s ease-out;
+}
+.call-stale-banner .csb-icon {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: rgba(245, 158, 11, 0.18); color: var(--warning, #f59e0b);
+  font-size: 18px;
+}
+.call-stale-banner .csb-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.call-stale-banner .csb-title { font-weight: 700; color: var(--text-1, #fff); font-size: .92rem; }
+.call-stale-banner .csb-sub { font-size: .78rem; color: var(--text-2, #aaa); }
+@media (max-width: 480px) {
+  .call-stale-banner {
+    left: 8px; right: 8px; transform: none; max-width: none; width: auto;
+    flex-wrap: wrap;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .call-incoming-backdrop, .call-active-panel { animation: none; }
 }

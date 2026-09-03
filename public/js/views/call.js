@@ -14,7 +14,7 @@ import { state, me, notify, subscribe as stateSub } from '../lib/state.js';
 import {
   accept, decline, cancel, hangup, toggleMic, toggleCam,
   isMicOn, isCamOn, toggleMinimize, isMinimized, setPanelPosition,
-  getElapsedSec, forceHangup,
+  getElapsedSec, forceHangup, selfRecoverStale, callSelfRecover,
   history as fetchHistory, pollActive, getActive, subscribe as callSub,
   startNegotiation, initiate
 } from '../lib/call.js';
@@ -24,6 +24,7 @@ import { sb } from '../lib/db.js';
 
 let viewEl = null;
 let incoming = null;     // last incoming call (for re-render)
+let rehydratedStale = null; // { call, stale } — for the "abandoned call" banner
 let historyRows = [];
 let panelEl = null;
 let panelTimer = null;   // ticks the elapsed-seconds display
@@ -104,11 +105,14 @@ function ensureStateSubs() {
     } else if (ev.type === 'rehydrate') {
       // After refresh, we have an active call row but no local WebRTC.
       // Surface a minimal "active call" entry so the UI is consistent.
+      // If `stale=true`, also render a "looks abandoned — hang up?" banner.
       const c = ev.call || {};
       if (!incoming && c.caller_id && c.callee_id) {
         incoming = { id: c.id, callerId: c.caller_id, calleeId: c.callee_id, kind: c.kind, rehydrated: true };
       }
+      rehydratedStale = ev.stale ? { call: c, stale: true } : null;
       renderActive();
+      renderStaleBanner();
     }
   });
   _stateSub = stateSub(() => {
@@ -469,4 +473,37 @@ export function resetCallUI() {
   panelEl = null;
   stopPanelTimer();
   incoming = null;
+  rehydratedStale = null;
+  const sb2 = document.getElementById('call-stale-banner');
+  if (sb2) sb2.remove();
+}
+
+// "Stale call" banner — shows when pollActive() finds an active call row
+// older than 60s (calling/ringing) or 120s (reconnecting). Gives the user
+// a way to clean it up immediately so the next call they try succeeds.
+function renderStaleBanner() {
+  const old = document.getElementById('call-stale-banner');
+  if (old) old.remove();
+  if (!rehydratedStale || !rehydratedStale.call) return;
+  const c = rehydratedStale.call;
+  const otherId = c.caller_id === (state.profile && state.profile.id) ? c.callee_id : c.caller_id;
+  const other = state.profiles.get(otherId) || { id: otherId, display_name: 'someone', username: '' };
+  const ageMs = Date.now() - new Date(c.started_at).getTime();
+  const ageMin = Math.round(ageMs / 60_000);
+  const banner = el('div', { id: 'call-stale-banner', class: 'call-stale-banner', role: 'alert' },
+    el('div', { class: 'csb-icon' }, ic('triangle-warning')),
+    el('div', { class: 'csb-body' },
+      el('div', { class: 'csb-title' }, `Previous ${c.kind || 'call'} looks abandoned`),
+      el('div', { class: 'csb-sub' }, `With ${other.display_name || other.username || 'someone'} · ${ageMin}m ago in '${c.state}' state. Hang up to clear it and call again.`)),
+    el('button', { class: 'btn sm danger', onclick: async () => {
+      const r = await callSelfRecover(c.id, 'user_dismissed_stale');
+      toast(r ? 'Stale call cleared.' : 'Could not clear — try again.', r ? 'ok' : 'error');
+      rehydratedStale = null;
+      renderStaleBanner();
+      renderActive();
+    } }, ic('trash'), ' Clear stale call'),
+    el('button', { class: 'icon-btn', 'aria-label': 'Dismiss', title: 'Dismiss',
+      onclick: () => { rehydratedStale = null; renderStaleBanner(); } },
+      ic('cross')));
+  document.body.append(banner);
 }

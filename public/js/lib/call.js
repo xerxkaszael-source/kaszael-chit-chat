@@ -65,11 +65,22 @@ const CALL_TIMEOUT_MS = 50_000;
 let _callerTimeoutTimer = null;
 
 // ---- initiate (caller) ----
+// In-flight call UUIDs — guards against clicking the caller button twice
+// (or while a previous RPC is still in flight). Without this, the second
+// click passes the `if (activeCall)` guard (still null) and races a
+// second `call_initiate` RPC that may collide with the first row.
+const _initInFlight = new Set();
 export async function initiate(calleeId, kind = 'voice') {
   if (activeCall) {
     toast(`You're already in a ${activeCall.kind} call`, 'error');
     return null;
   }
+  if (_initInFlight.size > 0) {
+    toast('Already starting a call…', 'info', 1500);
+    return null;
+  }
+  const inflightKey = `${calleeId}:${kind}`;
+  _initInFlight.add(inflightKey);
   try {
     const r = await rpc('call_initiate', { v_callee_id: calleeId, v_kind: kind });
     if (!r?.ok) throw new Error(r?.error || 'initiate_failed');
@@ -97,8 +108,51 @@ export async function initiate(calleeId, kind = 'voice') {
     }, CALL_TIMEOUT_MS);
     return r.call_id;
   } catch (e) {
-    toast(`Call failed: ${e.message}`, 'error');
+    // Auto-self-recover if server says we're already in a call. This handles
+    // the case where a stale row from a dropped session is blocking us. We
+    // retry ONCE after running the bulk self-recover. If the second attempt
+    // also fails (e.g. genuine concurrent call), we surface the error.
+    const msg = (e && (e.message || String(e))) || '';
+    if (/CHC:busy/i.test(msg)) {
+      try {
+        const recovered = await rpc('call_self_recover_all', {});
+        if (recovered > 0) {
+          toast('Cleared a stale call — retrying…', 'info', 2000);
+          // Brief delay so the RPC settles + DB triggers update.
+          await new Promise(r => setTimeout(r, 300));
+          const r2 = await rpc('call_initiate', { v_callee_id: calleeId, v_kind: kind });
+          if (!r2?.ok) throw new Error(r2?.error || 'initiate_failed_retry');
+          activeCall = {
+            callId: r2.call_id,
+            peer: null,
+            localStream: null,
+            remoteStream: new MediaStream(),
+            kind, role: 'caller', state: 'calling',
+            otherId: calleeId,
+            minimized: false,
+            position: null,
+            startedAt: Date.now(),
+            connectedAt: null
+          };
+          setupSignaling();
+          emit({ type: 'state', call: activeCall });
+          clearTimeout(_callerTimeoutTimer);
+          _callerTimeoutTimer = setTimeout(() => {
+            if (activeCall && activeCall.callId === r2.call_id && activeCall.state !== 'connected') {
+              toast('No answer', 'info');
+              cancel();
+            }
+          }, CALL_TIMEOUT_MS);
+          return r2.call_id;
+        }
+      } catch (innerErr) {
+        // fall through to the error toast below
+      }
+    }
+    toast(`Call failed: ${msg}`, 'error');
     return null;
+  } finally {
+    _initInFlight.delete(inflightKey);
   }
 }
 
@@ -386,6 +440,17 @@ export async function startNegotiation() {
   emit({ type: 'state', call: activeCall });
 }
 
+// Direct wrapper for call_self_recover (server RPC). Pass the call_id
+// and an optional reason; the row gets marked 'failed' server-side.
+export async function callSelfRecover(callId, reason = 'user_recovered') {
+  try {
+    return await rpc('call_self_recover', { v_call_id: callId, v_reason: reason });
+  } catch (e) {
+    console.error('[chc] callSelfRecover failed', e);
+    return null;
+  }
+}
+
 // ---- local media controls ----
 export function toggleMic() {
   if (!activeCall || !activeCall.localStream) return false;
@@ -467,6 +532,9 @@ export async function history(limit = 30, beforeId = null) {
 }
 
 // ---- active poll (used on app boot) ----
+// Returns the active call row + a flag telling the view layer whether
+// the row is "stale" (>60s old in calling/ringing or >120s in reconnecting).
+// The view layer uses this to show a "looks abandoned — hang up?" banner.
 export async function pollActive() {
   try {
     const r = await rpc('call_active');
@@ -474,11 +542,57 @@ export async function pollActive() {
       // We have an active call but lost local state (refresh?). Restore minimally.
       if (!activeCall) {
         // We can't fully restore the WebRTC session, but at least surface the
-        // call row so the user can decide to rejoin or hangup.
-        emit({ type: 'rehydrate', call: r.call });
+        // call row so the user can decide to rejoin or hangup. The view layer
+        // (views/call.js) renders an "abandoned call" banner when stale=true.
+        const ageMs = Date.now() - new Date(r.call.started_at).getTime();
+        const stale = (r.call.state === 'calling' && ageMs > 60_000)
+                    || (r.call.state === 'ringing' && ageMs > 60_000)
+                    || (r.call.state === 'reconnecting' && ageMs > 120_000);
+        emit({ type: 'rehydrate', call: r.call, stale });
       }
     }
   } catch {}
+}
+
+// Same as pollActive but proactively cleans up OUR stale rows BEFORE the
+// busy-check fires. Called on app boot, after sign-in, and whenever we
+// suspect the user might be stuck.
+export async function selfRecoverStale() {
+  try {
+    const n = await rpc('call_self_recover_all', {});
+    return n;
+  } catch { return 0; }
+}
+
+// Hard cleanup on tab close / refresh during an active call.
+// What we CAN reliably do during unload:
+//   1. Stop all local media tracks (releases camera/mic LED)
+//   2. Close the RTCPeerConnection
+//   3. Tear down the signaling channel
+// What we CANNOT do (and rely on DB safety nets for):
+//   - Call `call_end` RPC: it requires the user's auth JWT, but
+//     getSession() / fetch / sendBeacon with custom headers don't survive
+//     unload reliably. sendBeacon can't carry auth headers at all.
+//     pg_cron (1-min schedule) + caller-side 50s timeout are the real
+//     safety nets for "row stays because client crashed mid-call".
+export function installUnloadCleanup() {
+  if (typeof window === 'undefined') return;
+  // Guard for non-browser envs (Node tests, SSR): window may not have
+  // addEventListener (Node global doesn't).
+  if (typeof window.addEventListener !== 'function') return;
+  if (typeof window.removeEventListener !== 'function') return;
+  const cleanup = () => {
+    if (!activeCall) return;
+    // Force-teardown local resources synchronously. DB row cleanup is the
+    // pg_cron job's responsibility.
+    try {
+      releaseMedia(activeCall.localStream);
+      if (activeCall.peer) activeCall.peer.close();
+      if (signalingChannel) sb.removeChannel(signalingChannel);
+    } catch {}
+  };
+  window.addEventListener('beforeunload', cleanup);
+  window.addEventListener('pagehide', cleanup);
 }
 
 export function getActive() { return activeCall; }

@@ -16,10 +16,12 @@ import { toast, el, ic } from './lib/util.js';
 import { loadInbox } from './lib/dm.js';
 import { refreshDmUnread } from './lib/notifications.js';
 import { start as startPresence } from './lib/presence.js';
+import { installUnloadCleanup, selfRecoverStale } from './lib/call.js';
 
 applyTheme();
 watchSystemTheme();
 installAudioUnlock();
+installUnloadCleanup();
 
 const ROOT = document.getElementById('app');
 
@@ -28,6 +30,9 @@ async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   state.session = session;
   if (session) {
+    // Clean up stale call rows on app boot (covers refresh-after-crash case).
+    // Safe no-op if no session or no stale rows.
+    try { await selfRecoverStale(); } catch {}
     const ok = await hydrateProfile();
     if (ok) { enterApp(); return; }
     // session exists but profile gone/invalid → sign out cleanly
@@ -63,6 +68,13 @@ async function loadSettings() {
 }
 
 async function onAuthed() {
+  // First-thing: clean up any stale call rows this user might be stuck on
+  // from a previous crashed tab / dropped network. This makes the busy
+  // check in call_initiate pass on the very first attempt.
+  try {
+    const n = await selfRecoverStale();
+    if (n > 0) toast(`Cleared ${n} stale call${n > 1 ? 's' : ''} from a previous session`, 'info', 3000);
+  } catch {}
   const ok = await hydrateProfile();
   if (!ok) { renderAuth(ROOT, onAuthed); return; }
   enterApp();

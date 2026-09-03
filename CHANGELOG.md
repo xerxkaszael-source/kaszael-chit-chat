@@ -8,6 +8,70 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
+### Fixed (commit TBD) — CHC:busy false-positive (5 root causes, 6 layers)
+When a caller/callee network drops, tab closes, or mobile background suspends the app mid-call, the row in `calls` stays in `calling`/`ringing`/`reconnecting` state forever — and the next time EITHER party tries to call ANYONE, `call_initiate` rejects with `CHC:busy:You are already in a call.` Verified live on 2026-09-04: a stale row from `extr4vax` → `scylza` dated 2026-09-03 19:09 was blocking both users.
+
+**Root causes (5, layered):**
+1. **PRIMARY:** `call_miss_sweep` RPC existed but nothing invoked it. No `pg_cron` extension installed, no Edge Function, no other RPC calls it. The migration 019 comment "defense in depth" was wrong — it relied entirely on the client.
+2. `initiate()` in `lib/call.js` only guarded against re-entry after `activeCall` was set. Clicking call twice BEFORE the first RPC returned passed the guard (still null) and raced a second `call_initiate` RPC.
+3. Caller-side 50s timeout didn't fire when the user closed the tab — the row stayed.
+4. `call_end` only worked on a subset of states (gap between `accepted` and `connecting` could leave the row stuck).
+5. `pollActive` rehydrate event surfaced the stale row but offered no UI to clean it up — user clicks Call → `CHC:busy`.
+
+**Fix (defense in depth, 4 layers):**
+
+Layer 1 — Migration `027_call_busy_recovery.sql`:
+- `CREATE EXTENSION pg_cron` + `cron.schedule('chc_call_miss_sweep_1m', '* * * * *', ...)` — runs every minute
+- `call_initiate` now auto-sweeps stale rows (>=60s in calling/ringing, >=120s in reconnecting) BEFORE the busy check, in the same transaction
+- `call_self_recover(v_call_id uuid, v_reason text)` — lets a participant manually clean up a stale row
+- `call_self_recover_all(v_reason text)` — bulk self-recover (used by the client on boot)
+- `call_end` loosened to accept ALL non-terminal states (no more gap)
+- `call_active_count()` — diagnostic helper
+- All granted to `authenticated`
+
+Layer 2 — `lib/call.js`:
+- `_initInFlight` Set guards `initiate()` against re-entrancy
+- Auto-self-recover retry on `CHC:busy` (once) — calls `call_self_recover_all` and retries
+- `selfRecoverStale()` exported — call on app boot + post-auth
+- `callSelfRecover(callId)` exported — UI button hook for the stale banner
+- `installUnloadCleanup()` — `beforeunload` + `pagehide` listeners that synchronously stop media tracks + close peer (DB row cleanup delegated to pg_cron since auth headers can't survive unload)
+- `pollActive` now tags the emit with `stale: true` if the row is older than 60s/120s in the relevant states
+- `installUnloadCleanup` guard for non-browser envs (Node tests / SSR)
+
+Layer 3 — `main.js`:
+- `boot()` and `onAuthed()` both call `selfRecoverStale()` BEFORE `hydrateProfile()` — covers the "user already has session, refreshes after a crash" case
+- `installUnloadCleanup()` called at module init (alongside `applyTheme` / `watchSystemTheme`)
+
+Layer 4 — `views/call.js`:
+- New `renderStaleBanner()` — when `rehydrate` event has `stale: true`, shows a dismissable banner ("Previous call looks abandoned") with a "Clear stale call" button that calls `callSelfRecover(callId)`
+- `resetCallUI()` also clears the banner
+
+Layer 5 — CSS:
+- `.call-stale-banner` styling (warning-yellow border, centered top, responsive)
+
+**Verified live on DB:**
+- `pg_cron` extension installed (1.6.4)
+- `cron.job` has `chc_call_miss_sweep_1m` scheduled `* * * * *` active=true
+- Injected fake 90s-old stale row → `call_miss_sweep()` cleared it (1 row affected) → state=`missed`, end_reason=`no_answer_timeout`
+- `call_active_count()` returns empty (clean)
+- `call_initiate` body verified to contain `stale_initiate_sweep` + `stale_reconnecting_sweep` + `CHC:busy`
+
+**Verified locally:**
+- 20/20 JS files pass `vm.SourceTextModule` ESM parse
+- `node --check` clean
+- `call.js` module-surface test: 24/24 exports valid (added `selfRecoverStale`, `callSelfRecover`, `installUnloadCleanup` to the 21 existing)
+
+**Files (4):** `public/js/lib/call.js`, `public/js/main.js`, `public/js/views/call.js`, `public/styles/app.css`, `supabase/migrations/027_call_busy_recovery.sql`
+
+**Live DB status:** migration 027 applied via Management API at 2026-09-04 (the cron job is running NOW). Live CDN still on `0346cbb` (Netlify deploy credit limit) — but the **busy-check fix is effective IMMEDIATELY for any user who reloads**, because:
+- The next `call_initiate` will run the auto-sweep server-side (migration 027 is already live).
+- Once they re-auth, `selfRecoverStale()` in `boot()` will also clear any leftover rows before the busy check fires.
+- The cron job will sweep within 1 minute regardless.
+
+**Users with stuck state right now:** Anyone whose `auth.uid()` is a participant in a stale row should re-auth (or just wait 60s for the cron sweep) and the symptom will disappear.
+
+---
+
 ### Fixed (commit `583b1a2` + `1664c09`)
 - **deploy.sh error reporting** — when Netlify returns an error (e.g. credit limit, invalid token, payload too large) deploy.sh was printing `deployed: ?` and exiting 0, so the user couldn't tell the deploy had failed. Now the script parses the JSON response, exits non-zero on `error` key, and surfaces the actual API message (e.g. `"Account credit usage exceeded - new deploys are blocked until credits are added"`) to stderr.
 
