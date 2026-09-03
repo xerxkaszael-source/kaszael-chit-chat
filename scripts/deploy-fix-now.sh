@@ -140,9 +140,9 @@ fi
 
 echo ""
 echo "===== Path 4: GitHub Pages fallback ====="
-echo "If all Netlify paths blocked, switch to GitHub Pages:"
-echo "  1. Run: cd public && git init && git commit -m 'call fix'"
-echo "  2. Push to xerxkaszael-source/kaszael-chit-chat-pages (enable Pages in settings)"
+echo "If all Netlify paths blocked, switch to GitHub Pages:
+echo "  1. Run: cd public && git init && git commit -m 'call fix'
+echo "  2. Push to xerxkaszael-source/kaszael-chit-chat (enable Pages in settings)"
 echo "  3. Update DNS or use the *.github.io URL"
 echo ""
 echo "Or use Cloudflare Pages / Vercel / Render — all support free static deploys."
