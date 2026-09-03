@@ -8,6 +8,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
+### Fixed (commit `cd89be6`) — Incoming call + floating bubble only worked on `/call/*`
+User A clicks Voice/Video Call → `call_initiate` inserts the row, the realtime event fires — but User B never received the incoming-call UI unless they happened to be on `/call/inbox` or `/call/history`. On every other route (`/chat`, `/dm/<uid>`, `/owner/<tab>`, `/notifications`, `/friends`, `/location`) there was no listener, so the floating incoming-call modal never appeared. Even on `/call`, the legacy view kept its own local `incoming` variable and called `accept()` from `lib/call.js` without ever going through `handleIncoming()`, so the WebRTC hand-off was a no-op (`activeCall` stayed `null` for the callee path).
+
+**Root causes (2, layered):**
+1. **PRIMARY:** `views/call.js` mounted its own postgres_changes subscription on `calls` from inside `renderCallView()`. That function only runs when `view === 'call'` in the router. Result: the realtime listener lived inside the view, not at the app root. Spec §5/§6 explicitly forbid this architecture.
+2. `lib/call.js` exports `handleIncoming(callId, callerId, kind)` which sets `activeCall` and emits `incoming`, but **no caller invoked it anywhere in the codebase**. The view's local `renderIncoming()` path bypassed the lib entirely, so `accept()` (guarded on `activeCall.role === 'callee'`) silently no-op'd.
+
+**Fix:**
+- New `public/js/lib/call-manager.js` — global call manager:
+  - `mountCallManager()` called once from `main.js` `enterApp()` (BEFORE `startRealtime`)
+  - postgres_changes subscription on `calls` with `filter: callee_id=eq.<auth.uid()>` (RLS narrows to my rows)
+  - On INSERT → `lib/call.handleIncoming()` → emit `incoming` → render floating modal in `document.body`
+  - On UPDATE → reflect state, kick off WebRTC negotiation when caller sees `accepted`
+  - Owns floating active-call panel (full + minimized bubble modes), drag, mic/cam/hangup
+  - `ensureCallManager()` idempotent helper for any view that wants to ensure it's up
+- `views/call.js` slimmed from 508 → 146 lines: only history list + `/call/voice|video/<uid>` auto-initiate remain.
+- `main.js` wires `mountCallManager()` into `enterApp()`; `resetCallUI` on kicked-banned now comes from the manager.
+
+**DB changes:** none. `calls` is already in `supabase_realtime`, RLS restricts visibility, pg_cron `chc_call_miss_sweep_1m` (last 3 runs succeeded) handles stale-row cleanup server-side.
+
+**Verification (audit_live):**
+- `node --check` passes on every file in `public/js/`
+- 0 unresolved imports
+- 0 `new X?.(` constructor-through-optional-chain traps
+- Exactly ONE `call-incoming-*` channel subscriber (the manager)
+- `handleIncoming` invoked from exactly one place (manager line 162)
+- `mountCallManager` invoked once at boot (main.js line 96); function idempotent
+
+**Deploy gate:** pushed to GitHub (`cd89be6`). NOT deployed to Netlify per spec §43 — needs real two-user A→B verification.
+
+---
+
 ### Fixed (commit TBD) — CHC:busy false-positive (5 root causes, 6 layers)
 When a caller/callee network drops, tab closes, or mobile background suspends the app mid-call, the row in `calls` stays in `calling`/`ringing`/`reconnecting` state forever — and the next time EITHER party tries to call ANYONE, `call_initiate` rejects with `CHC:busy:You are already in a call.` Verified live on 2026-09-04: a stale row from `extr4vax` → `scylza` dated 2026-09-03 19:09 was blocking both users.
 
