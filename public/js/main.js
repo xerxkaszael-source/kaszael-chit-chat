@@ -9,6 +9,7 @@ import { renderAuth } from './views/auth.js';
 import { renderShell } from './views/shell.js';
 import { openDm, cleanupDmRealtime } from './views/dm.js';
 import { renderNotifications } from './views/notifications.js';
+import { renderCallView } from './views/call.js';
 import { renderAdmin } from './views/admin.js';
 import { toast, el, ic } from './lib/util.js';
 import { loadInbox } from './lib/dm.js';
@@ -113,6 +114,10 @@ function route() {
   }
   if (view === 'notifications') {
     renderNotifications(ROOT.querySelector('.main') || ROOT);
+    return;
+  }
+  if (view === 'call') {
+    renderCallView(ROOT.querySelector('.main') || ROOT, rest[0] || 'inbox');
     return;
   }
   renderShell(ROOT, view);

@@ -693,6 +693,110 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 }
 
 /* ============================================================
+   Call view (Phase 5)
+   ============================================================ */
+.call-view { display: flex; flex-direction: column; height: 100%; }
+.call-view .head-tabs { display: flex; gap: 6px; margin-left: auto; }
+.call-view .head-tabs .tab {
+  padding: 6px 12px; border-radius: var(--radius-m, 8px);
+  background: transparent; border: 0; color: var(--text-2, #aaa);
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.call-view .head-tabs .tab:hover { background: var(--bg-2, rgba(255,255,255,0.04)); }
+.call-view .head-tabs .tab.active { background: var(--bg-3, rgba(255,255,255,0.08)); color: var(--text-1, #fff); }
+.call-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.active-call-card {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  border-radius: var(--radius-m, 8px);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+}
+.active-call-meta { flex: 1; }
+.active-call-state { font-weight: 600; text-transform: capitalize; color: var(--accent, #4a9eff); }
+.active-call-kind { font-size: 12px; color: var(--text-3, #888); text-transform: uppercase; }
+
+.call-history-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: var(--radius-m, 8px);
+  transition: background .15s;
+}
+.call-history-row:hover { background: var(--bg-2, rgba(255,255,255,0.04)); }
+.call-history-row.state-missed .call-state,
+.call-history-row.state-declined .call-state,
+.call-history-row.state-failed .call-state,
+.call-history-row.state-cancelled .call-state { color: var(--danger, #e74c3c); }
+.call-history-line1 { display: flex; gap: 8px; align-items: baseline; font-weight: 500; color: var(--text-1, #ddd); }
+.call-history-dir { font-size: 11px; color: var(--text-3, #888); text-transform: uppercase; }
+.call-history-line2 { font-size: 12px; color: var(--text-3, #888); margin-top: 2px; }
+.call-state { text-transform: capitalize; }
+
+/* Incoming call modal */
+.call-incoming-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fade-in .18s ease-out;
+}
+.call-incoming-card {
+  background: var(--bg-1, #1a1a1a);
+  border-radius: var(--radius-l, 16px);
+  padding: 24px 32px;
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  min-width: 320px; max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  animation: scale-in .2s ease-out;
+}
+.call-incoming-header { text-align: center; }
+.call-incoming-header h2 { margin: 4px 0 0; font-size: 18px; }
+.call-kind-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 12px;
+  background: var(--accent, #4a9eff); color: white;
+  font-size: 11px; text-transform: uppercase; font-weight: 600;
+}
+.call-incoming-name { font-size: 20px; font-weight: 600; color: var(--text-1, #fff); }
+.call-incoming-actions { display: flex; gap: 16px; margin-top: 8px; }
+.call-incoming-actions .btn { padding: 12px 20px; font-size: 15px; }
+
+/* Active call floating panel */
+.call-active-panel {
+  position: fixed; bottom: 16px; right: 16px; z-index: 999;
+  background: var(--bg-1, #1a1a1a);
+  border-radius: var(--radius-l, 16px);
+  padding: 16px; min-width: 280px; max-width: 360px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  animation: scale-in .2s ease-out;
+}
+.call-active-tiles {
+  display: flex; gap: 6px; width: 100%;
+  border-radius: var(--radius-m, 8px); overflow: hidden;
+  background: var(--bg-3, #000);
+}
+.call-tile { width: 100%; max-height: 180px; object-fit: cover; }
+.call-tile.local { max-width: 100px; max-height: 100px; border-radius: 8px; align-self: flex-end; }
+.call-active-name { font-weight: 600; color: var(--text-1, #fff); }
+.call-active-state { font-size: 12px; color: var(--accent, #4a9eff); text-transform: uppercase; font-weight: 600; }
+.call-active-controls { display: flex; gap: 10px; margin-top: 4px; }
+.call-ctrl {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--bg-3, rgba(255,255,255,0.1));
+  color: var(--text-1, #fff);
+  border: 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; transition: background .15s, transform .1s;
+}
+.call-ctrl:hover { background: var(--bg-2, rgba(255,255,255,0.16)); }
+.call-ctrl:active { transform: scale(0.95); }
+.call-ctrl.danger { background: var(--danger, #e74c3c); }
+.call-ctrl.danger:hover { background: #c0392b; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scale-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .call-incoming-backdrop, .call-active-panel { animation: none; }
+}
+
+/* ============================================================
    Notification center view (Phase 4c)
    ============================================================ */
 .notif-view { display: flex; flex-direction: column; height: 100%; }

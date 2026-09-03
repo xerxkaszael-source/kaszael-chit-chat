@@ -138,6 +138,18 @@ export const uuid = () => (crypto.randomUUID ? crypto.randomUUID() :
     const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
   }));
 
+// Format seconds → "0:42" / "12:34" / "1:23:45"
+export function fmtDuration(sec) {
+  sec = Math.max(0, parseInt(sec, 10) || 0);
+  if (sec < 60) return `0:${String(sec).padStart(2, '0')}`;
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 // icons helper (flaticon uicons). name = uicons name without prefix.
 export function ic(name, cls = '') {
   return el('i', { class: `fi fi-rs-${name}${cls ? ' ' + cls : ''}`, 'aria-hidden': 'true' });
