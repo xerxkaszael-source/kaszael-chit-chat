@@ -16,7 +16,7 @@ export function renderAuth(root, onDone) {
     card.append(
       el('div', { class: 'brand-lg' },
         el('div', { class: 'brand-mark-lg' }, ic('comment')),
-        el('h1', {}, 'Kaszael Chit&Chat'),
+        el('h1', {}, 'Kaszael Ngobrol'),
         el('p', { class: 'sub' }, 'A comfortable place to talk with friends.')),
       el('div', { class: 'auth-tabs' },
         tabBtn('login', 'Sign in'),

@@ -1,4 +1,4 @@
-# Changelog — Kaszael Chit&Chat
+# Changelog — Kaszael Ngobrol (renamed 2026-09-04 from Kaszael Chit&Chat)
 
 All notable changes to this project are documented here. Dates are `YYYY-MM-DD` UTC.
 
@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 ---
 
 ## [Unreleased]
+
+### Renamed (commit PENDING) — Project + Netlify site renamed `kaszael-chit-chat` → `kaszael-ngobrol` (2026-09-04)
+The old Netlify account `kaszael-chat` (site id `2a67b8f4-adb1-4906-a91e-901a754bc4d6`, canonical URL `https://kaszael-chat.netlify.app`) hit its credit limit and could no longer deploy. The site was migrated to a new Netlify account `kaszaelTM` with a fresh site `kaszael-ngobrol` (site id `803d2c44-4a6a-48e1-8a5c-b78dcee9b4cc`, canonical URL `https://kaszael-ngobrol.netlify.app`, **0/300 credits used**). The GitHub repo name (`xerxkaszael-source/kaszael-chit-chat`) and the Supabase project (ref `himrvevlnbpubwmsdhya`) are unchanged.
+
+**Files updated:**
+- `public/index.html` — `<title>Kaszael Ngobrol</title>`, meta description updated
+- `public/js/config.js` — `appName: "Kaszael Ngobrol"`, `version: "1.0.0-callfix"`
+- `public/js/views/auth.js` — login screen title updated
+- `scripts/deploy.sh` — `SITE_NAME` default → `kaszael-ngobrol`, injected `appName` updated
+- `scripts/deploy-fix-now.sh` — `SITE_ID` reads `$NETLIFY_SITE_ID` env (defaults to new site id), all `kaszael-chat`/`kaszael-chit-chat` refs → `kaszael-ngobrol`
+- `.netlify/state.json` — `site_id` updated, `rename_history` block added
+- `PROJECT.md` — header renamed + rename block + status line updated to new URL
+- `README.md` — title + badge URL + Live site link + browser diagram + audit table updated
+- `CHANGELOG.md` (this file) — title + rename block
+- `~/.hermes/.env` — `NETLIFY_AUTH_TOKEN` rotated, `NETLIFY_SITE_ID`/`NETLIFY_SITE_NAME`/`NETLIFY_LIVE_URL` added
+
+**Not changed (intentionally):** GitHub repo name `xerxkaszael-source/kaszael-chit-chat` (user did not ask); the GitHub `main` branch stays as-is so existing clones/forks/clones-by-URL keep working. The new URL `kaszael-ngobrol.netlify.app` points at the same Supabase backend.
+
+**Deploy gate:** With the new token + new site + available credits, the first deploy to `kaszael-ngobrol` should succeed immediately. After deploy, the user must:
+1. Open https://kaszael-ngobrol.netlify.app/ — verify build sha in HTML = current git HEAD
+2. Verify `js/lib/call-manager.js` is served (was missing from old CDN)
+3. Run the two-session realtime test from spec §38
+
+---
 
 ### Fixed (commit `92cea31`) — Accept bubble disappears + iPhone Chrome misses call + permission UX
 Three layered call bugs fixed end-to-end per spec §1-50.

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 💬 Kaszael Chit&Chat
+# 💬 Kaszael Ngobrol (renamed 2026-09-04 from Kaszael Chit&Chat)
 
 ### A polished, realtime social chatroom for friends — chat, voice & video calls, with presence and location.
 
@@ -16,7 +16,7 @@
 
 <br/>
 
-[**🌐 Live site**](https://kaszael-chat.netlify.app) ·
+[**🌐 Live site**](https://kaszael-ngobrol.netlify.app) ·
 [**📦 Source**](https://github.com/xerxkaszael-source/kaszael-chit-chat) ·
 [**📋 Changelog**](./CHANGELOG.md) ·
 [**🛠 Architecture**](./docs/architecture.md)
@@ -160,7 +160,7 @@ Built by **Kaszael Lab** on Android (Termux), deployed from a mobile terminal to
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ Browser  (kaszael-chat.netlify.app)                     │
+│ Browser  (kaszael-ngobrol.netlify.app)                     │
 │  public/  ──  index.html, js/views, js/lib, styles/     │
 │  ESM-only, vendor supabase-js UMD locally               │
 │  Hash router: /chat · /dm/<u> · /call/<k>/<u>          │
@@ -207,7 +207,7 @@ bash scripts/deploy.sh
 2. Inject `window.SUPABASE_CONFIG` (url, anonKey, appName, version) into `build/js/config.js`
 3. Inject short git SHA as `__BUILD_SHA__` in `index.html` (lets users see which deploy they're on)
 4. Zip `build/` (Python — Termux has no `zip` binary)
-5. Find-or-create Netlify site named `$SITE_NAME` (default `kaszael-chat`)
+5. Find-or-create Netlify site named `$SITE_NAME` (default `kaszael-ngobrol`)
 6. `POST /sites/{id}/deploys` with the zip; record deploy id
 7. **Parse JSON properly** — surface real API errors (`Account credit usage exceeded ...`) instead of silently printing `?`
 
@@ -223,8 +223,8 @@ Every deploy must pass this audit before claiming "live ✅":
 | ESM parse | `node --experimental-vm-modules` + `vm.SourceTextModule` | exit 0 (catches errors `node --check` misses) |
 | Local md5 | `md5sum public/js/<file>.js` | matches git HEAD blob |
 | GitHub md5 | `curl -L https://raw.githubusercontent.com/.../main/public/js/<file>.js \| md5sum` | matches local |
-| **Netlify md5** | `curl -s https://kaszael-chat.netlify.app/js/<file>.js \| md5sum` | **matches GitHub** |
-| Build marker | `curl -s https://kaszael-chat.netlify.app/ \| grep 'build [a-z0-9]\+'` | equals git HEAD short SHA |
+| **Netlify md5** | `curl -s https://kaszael-ngobrol.netlify.app/js/<file>.js \| md5sum` | **matches GitHub** |
+| Build marker | `curl -s https://kaszael-ngobrol.netlify.app/ \| grep 'build [a-z0-9]\+'` | equals git HEAD short SHA |
 | Icon validity | grep live Flaticon CSS for each `fi-rs-X` class | all `:before` present |
 | Frontend sanity | Supabase CDN first · `createClient` in config.js · UMD not ESM import-map | all 5 |
 | Constructor traps | `grep -r 'new X?.()' public/js/` | 0 hits |

@@ -1,0 +1,17 @@
+{
+  "site_id": "803d2c44-4a6a-48e1-8a5c-b78dcee9b4cc",
+  "name": "kaszael-ngobrol",
+  "ssl_url": "https://kaszael-ngobrol.netlify.app",
+  "default_domain": "kaszael-ngobrol.netlify.app",
+  "deploy_script_version": "fda0cc0 (python zipfile fix) + ngobrol-rename-20260904",
+  "latest_good_deploy": "PENDING_FIRST_DEPLOY_AFTER_RENAME",
+  "latest_good_permalink": null,
+  "rename_history": {
+    "renamed_from": "kaszael-chat",
+    "renamed_at": "2026-09-04",
+    "old_site_id": "2a67b8f4-adb1-4906-a91e-901a754bc4d6",
+    "new_site_id": "803d2c44-4a6a-48e1-8a5c-b78dcee9b4cc",
+    "reason": "Netlify account kaszael-chat hit credit limit; migrated to kaszaelTM account + kaszael-ngobrol site. New domain kaszael-ngobrol.netlify.app; old kaszael-chat.netlify.app is dead."
+  },
+  "deploy_instructions": "bash scripts/deploy.sh (uses SITE_NAME=kaszael-ngobrol by default + reads NETLIFY_AUTH_TOKEN/NETLIFY_SITE_ID from ~/.hermes/.env)"
+}

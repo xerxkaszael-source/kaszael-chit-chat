@@ -1,11 +1,12 @@
-# Kaszael Chit&Chat — PROJECT.md
+# Kaszael Ngobrol — PROJECT.md (renamed 2026-09-04 from Kaszael Chit&Chat)
 
-**Status:** LIVE (deployed 2026-09-02 — https://kaszael-chit-chat.netlify.app)
-**Started:** 2026-09-02
+**Status:** LIVE (deployed 2026-09-04 — https://kaszael-ngobrol.netlify.app/)
+**Started:** 2026-09-02 (as Kaszael Chit&Chat)
+**Renamed:** 2026-09-04 — migrated from old Netlify account `kaszael-chat` (credit limit) to new account `kaszaelTM` + new site `kaszael-ngobrol` (site id `803d2c44-4a6a-48e1-8a5c-b78dcee9b4cc`). Old URL `https://kaszael-chat.netlify.app` is dead.
 **Stack:** Vanilla ES modules (no build step) + Supabase (Auth/Postgres/Realtime/Storage) + Netlify static deploy + GitHub source-of-truth.
 
 ## Purpose
-Full-scale production chatroom for friends. Single primary room "General". Pure chat — NO calls of any kind.
+Full-scale production chatroom for friends. Single primary room "General". Includes realtime calls (voice + video) over WebRTC, DMs, friends, owner moderation, broadcasts, audit logs, and location.
 
 ## Architecture (summary — detail in docs/)
 - Frontend: static SPA, hash router, ES modules, supabase-js via import map (jsdelivr CDN). Dark-first design system.

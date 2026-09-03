@@ -41,7 +41,7 @@ cat > "$BUILD/js/config.js" <<EOF
 window.SUPABASE_CONFIG = {
   url: "$URL",
   anonKey: "$ANON",
-  appName: "Kaszael Chit&Chat",
+  appName: "Kaszael Ngobrol",
   version: "1.0.1-callfix"
 };
 EOF
@@ -68,7 +68,10 @@ echo ""
 echo "Build zip ready at $ZIP"
 echo ""
 
-SITE_ID="2a67b8f4-adb1-4906-a91e-901a754bc4d6"
+# New project identity (2026-09-04): kaszael-ngobrol
+# Site id comes from $NETLIFY_SITE_ID env var (preferred) or falls back
+# to the verified id for the live URL https://kaszael-ngobrol.netlify.app.
+SITE_ID="${NETLIFY_SITE_ID:-803d2c44-4a6a-48e1-8a5c-b78dcee9b4cc}"
 
 echo "===== Path 1: Direct deploy (POST /deploys) ====="
 RESP=$(curl -sS -X POST \
@@ -98,7 +101,7 @@ echo "===== Path 2: Drag-and-drop endpoint ====="
 HTTP=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
   -H "Authorization: Bearer $NETLIFY" \
   -F "file=@$ZIP" \
-  "https://kaszael-chat.netlify.app/.netlify/deploy" 2>&1 || echo "000")
+  "https://kaszael-ngobrol.netlify.app/.netlify/deploy" 2>&1 || echo "000")
 echo "HTTP $HTTP"
 if [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ]; then
   echo "✓ deployed via drag-and-drop"
@@ -110,7 +113,7 @@ echo "===== Path 3: Deploy to NEW site (workaround credit limit on old) ====="
 NEW_SITE=$(curl -sS -X POST \
   -H "Authorization: Bearer $NETLIFY" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"kaszael-chit-chat-v2-$(date +%s)\"}" \
+  -d "{\"name\":\"kaszael-ngobrol-v2-$(date +%s)\"}" \
   "https://api.netlify.com/api/v1/sites" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))")
 if [ -z "$NEW_SITE" ]; then
   echo "  ✗ could not create new site"
@@ -145,7 +148,7 @@ echo ""
 echo "Or use Cloudflare Pages / Vercel / Render — all support free static deploys."
 echo ""
 echo "ALL PATHS FAILED. Manual intervention required:"
-echo "  1. Log into https://app.netlify.com/ → site 'kaszael-chat' → Billing"
+echo "  1. Log into https://app.netlify.com/ → site 'kaszael-ngobrol' → Billing"
 echo "  2. Add credits OR upgrade to a paid plan"
 echo "  3. Retry: bash scripts/deploy-fix-now.sh"
 exit 1

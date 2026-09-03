@@ -1,13 +1,17 @@
+# Build artifacts
 build/
+deploy-fix.zip
 deploy.zip
-node_modules/
-*.bak
-*.*.bak
-*.*.*.bak
-*.bak.*
-*.*.bak.*
-*.*.*.bak.*
+
+# Editor / OS
 .DS_Store
-# Netlify runtime state (not source)
-.netlify/
-.last-deploy-id
+.idea/
+.vscode/
+*.swp
+
+# Env (sandbox only — env lives in ~/.hermes/.env)
+.env
+.env.local
+
+# Backups (per workspace convention)
+.bak/

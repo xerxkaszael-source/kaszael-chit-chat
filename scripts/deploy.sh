@@ -12,7 +12,7 @@ ZIP="$PROJECT_ROOT/deploy.zip"
 REF="${SUPABASE_PROJECT_REF:-}"
 ANON="${SUPABASE_ANON_KEY:-}"
 NETLIFY="${NETLIFY_AUTH_TOKEN:-}"
-SITE_NAME="${SITE_NAME:-kaszael-chat}"
+SITE_NAME="${SITE_NAME:-kaszael-ngobrol}"
 
 if [ -z "$REF" ] || [ -z "$ANON" ] || [ -z "$NETLIFY" ]; then
   echo "Missing env: REF=$REF ANON_LEN=${#ANON} NETLIFY_LEN=${#NETLIFY}" >&2
@@ -32,8 +32,8 @@ cat > "$BUILD/js/config.js" <<EOF
 window.SUPABASE_CONFIG = {
   url: "$URL",
   anonKey: "$ANON",
-  appName: "Kaszael Chit&Chat",
-  version: "1.0.0"
+  appName: "Kaszael Ngobrol",
+  version: "1.0.0-callfix"
 };
 EOF
 
