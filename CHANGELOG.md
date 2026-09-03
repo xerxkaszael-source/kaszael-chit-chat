@@ -149,3 +149,13 @@ Full ledger: [`/sdcard/Kaszael/logs/audits/verification-ledger.jsonl`](../../../
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+
+## [unreleased] — 2026-09-03
+
+### Fixed
+- Production hardening pass (commit `1b9513d` on `next-gen`)
+- DM realtime: added `direct_messages`, `conversation_members`, `message_bookmarks`
+  to `supabase_realtime` publication; `REPLICA IDENTITY FULL` on `direct_messages`
+- Build marker: deploy.sh injects short commit SHA into `index.html`
+  (replaces hardcoded `a1b2c3d` placeholder)
+- Removed 3 stale `.bak` files from `public/`

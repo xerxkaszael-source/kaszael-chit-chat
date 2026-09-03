@@ -193,3 +193,58 @@ zips public/, drops to Netlify site `kaszael-chat` via API.
   - Netlify deploy id `6a986cbbc0db89e8c3c83e82` state=ready
 - **Lesson learned (memory):** For browser-targeted ESM modules, `node --check` is insufficient. Always validate with `vm.SourceTextModule` (Node) or a real bundler. Added `node --experimental-vm-modules` parse-all.mjs harness to `temp/` for future use.
 - **Ledger entry:** `/sdcard/Kaszael/logs/audits/verification-ledger.jsonl` FIX-20260903-02
+
+## PRODUCTION HARDENING PASS (2026-09-03) — §93 DoD re-verify
+
+**Trigger**: re-running MASTER PROMPT after prior session interrupted mid-audit.
+
+**Findings**:
+- 3 stale .bak files in `public/` (config.js, shell.js, panels.js) — removed
+- `direct_messages`, `conversation_members`, `message_bookmarks` were missing from
+  `supabase_realtime` publication — Phase 3 DM realtime was effectively silent
+- `direct_messages` lacked `REPLICA IDENTITY FULL` — UPDATE/DELETE payloads were
+  incomplete (Realtime spec violation)
+- `index.html` build marker was hardcoded `a1b2c3d` (placeholder) — replaced
+  with `__BUILD_SHA__` for deploy-time injection
+- No new feature work needed — Phases 1-7 (general chat, friends, DM, calls,
+  notifications, presence, location, security audit, performance) were all
+  already shipped, and §29 icon policy was already addressed in Phase 7
+  (emoji audit pass + reaction picker redesign: buttons show text labels,
+  not emoji characters)
+
+**Fixes (single commit `1b9513d` on `next-gen`)**:
+1. Migration 021 (`supabase/migrations/021_dm_realtime_publication.sql`)
+   - ALTER direct_messages REPLICA IDENTITY FULL
+   - ADD direct_messages, conversation_members, message_bookmarks to
+     supabase_realtime publication (idempotent: skips if already present)
+2. `scripts/deploy.sh` §2b — inject short commit SHA into `index.html`
+3. `public/index.html` — placeholder `a1b2c3d` → token `__BUILD_SHA__`
+4. `public/js/*.bak.1*` — removed (3 files)
+
+**Verified live (post-deploy `6a98f868a1ae2dba21c1c1d3`)**:
+- Build marker on live CDN: `1b9513d` ✓
+- Anon key length on live CDN: 208 chars ✓
+- realtime publication: 10 tables (was 7) ✓
+- direct_messages REPLICA IDENTITY: `f` (FULL) ✓
+- All 28 JS files pass `node --check` ✓
+- All static assets HTTP 200 ✓
+- No .bak files in production deploy ✓
+- E2E guest flow: signup → guest_enter → message_list → message_send ✓
+- E2E member DM flow: signup → friend_request → friend_respond →
+  conversation_get_or_create → dm_send ✓
+- Security: guests blocked from friend_request (`CHC:guest:Guests cannot
+  add friends.`) ✓
+- Security: non-friends blocked from conversation_get_or_create
+  (`{ok: false, error: 'not_friends'}`) ✓
+
+**§93 Definition of Done**: 14/14 verified (one check originally showed
+404 due to my own URL typo — `location.js` is actually
+`location-settings.js`, all views verified present).
+
+**Deployment gate**: PASS
+- GitHub: `next-gen` at `1b9513d` (17 commits, ahead of main)
+- Netlify: live at `https://kaszael-chat.netlify.app` (canonical URL still
+  serves real app, no envelope — user unlinked envelope manually)
+- DB: 28 tables, 111 RPCs (109 SECDEF), 31 policies, 72 indexes
+- Realtime: 10 publication tables
+- No secrets committed (anon key is public by design)
