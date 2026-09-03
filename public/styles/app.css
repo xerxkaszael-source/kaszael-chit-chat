@@ -693,6 +693,25 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
 }
 
 /* ============================================================
+   Reaction picker (public + DM, Phase 3/4/7)
+   ============================================================ */
+.reaction-picker {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 6px;
+}
+.reaction-pick {
+  padding: 6px 12px;
+  border-radius: var(--radius-m, 8px);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+  border: 1px solid var(--line-1, transparent);
+  color: var(--text-1, #ddd);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background .15s, transform .1s;
+}
+.reaction-pick:hover { background: var(--bg-3, rgba(255,255,255,0.08)); }
+.reaction-pick:active { transform: scale(0.95); }
+
+/* ============================================================
    Location settings view (Phase 6)
    ============================================================ */
 .loc-settings { display: flex; flex-direction: column; height: 100%; }

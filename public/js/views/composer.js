@@ -192,16 +192,33 @@ export function renderComposer() {
   return wrap;
 }
 
-// ---- emoji quick picker ----
-const QUICK_EMOJI = ['😀','😂','😊','😍','🤔','👍','🙏','🔥','🎉','❤️','😢','😮'];
+// ---- text-label quick reactions (Flaticon UIcons policy: no emoji icons) ----
+// Users can still TYPE emoji in the message body; this picker is for
+// quick-insert of common emoticons as text (not as UI icons).
+const QUICK_REACTIONS = [
+  { label: '+1',    text: '👍' },
+  { label: 'haha',  text: '😄' },
+  { label: 'love',  text: '❤️' },
+  { label: 'wow',   text: '😮' },
+  { label: 'sad',   text: '😢' },
+  { label: 'fire',  text: '🔥' },
+  { label: 'party', text: '🎉' },
+  { label: 'think', text: '🤔' }
+];
 function openEmoji(input) {
   const pop = document.createElement('div');
   pop.className = 'modal-backdrop';
   const panel = el('div', { class: 'modal', style: 'max-width:320px' },
-    el('div', { class: 'modal-body', style: 'display:flex;flex-wrap:wrap;gap:6px;font-size:1.5rem' },
-      QUICK_EMOJI.map(e => el('button', { style: 'padding:6px;border-radius:8px;font-size:1.4rem', onclick: () => {
-        input.value += e; input.dispatchEvent(new Event('input')); pop.remove(); input.focus();
-      } }, e))));
+    el('div', { class: 'modal-body', style: 'display:flex;flex-wrap:wrap;gap:6px' },
+      QUICK_REACTIONS.map(r => el('button', {
+        class: 'btn ghost',
+        style: 'padding:6px 10px',
+        title: r.label,
+        'aria-label': `Insert ${r.label}`,
+        onclick: () => {
+          input.value += r.text; input.dispatchEvent(new Event('input')); pop.remove(); input.focus();
+        }
+      }, r.label))));
   pop.addEventListener('click', (ev) => { if (ev.target === pop) pop.remove(); });
   pop.append(panel);
   document.getElementById('modals').append(pop);

@@ -6,7 +6,16 @@ import { rpc, storagePublicUrl } from '../lib/db.js';
 import { modal } from '../lib/util.js';
 import { openProfile } from './panels.js';
 
-const REACTION_SET = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🎉'];
+const REACTION_SET = [
+  { icon: 'thumbs-up', label: '+1', token: ':+1:' },
+  { icon: 'heart',    label: 'love', token: ':heart:' },
+  { icon: 'face-smile-beam', label: 'haha', token: ':joy:' },
+  { icon: 'face-surprise',   label: 'wow',  token: ':open:' },
+  { icon: 'face-frown',      label: 'sad',  token: ':cry:' },
+  { icon: 'fire',     label: 'fire',  token: ':fire:' },
+  { icon: 'hands-clapping', label: 'clap', token: ':clap:' },
+  { icon: 'party-horn', label: 'party', token: ':tada:' }
+];
 
 export function renderMessageRow(msg) {
   const own = msg.sender_id === me()?.id;
@@ -139,12 +148,13 @@ function actBtn(iconName, label, onclick) {
 function openReactionPicker(msg) {
   const m = modal({
     title: 'Add reaction',
-    body: el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;font-size:1.6rem' },
-      REACTION_SET.map(e => el('button', {
-        style: 'font-size:1.6rem;padding:6px;border-radius:10px',
-        'aria-label': `react ${e}`,
-        onclick: async () => { m.close(); await toggleReaction(msg.id, e); }
-      }, e)))
+    body: el('div', { class: 'reaction-picker' },
+      REACTION_SET.map(r => el('button', {
+        class: 'reaction-pick',
+        title: r.label,
+        'aria-label': `react with ${r.label}`,
+        onclick: async () => { m.close(); await toggleReaction(msg.id, r.token); }
+      }, r.label)))
   });
 }
 
