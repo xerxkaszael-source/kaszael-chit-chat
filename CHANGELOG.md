@@ -8,6 +8,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
+### Fixed (commit `583b1a2` + `1664c09`)
+- **deploy.sh error reporting** — when Netlify returns an error (e.g. credit limit, invalid token, payload too large) deploy.sh was printing `deployed: ?` and exiting 0, so the user couldn't tell the deploy had failed. Now the script parses the JSON response, exits non-zero on `error` key, and surfaces the actual API message (e.g. `"Account credit usage exceeded - new deploys are blocked until credits are added"`) to stderr.
+
+### Fixed (commit `1664c09`) — Owner Management tab + WebRTC hardening + floating bubble
+Six files changed (+616/-84): `public/js/views/admin2.js`, `public/js/views/admin.js`, `public/js/lib/call.js`, `public/js/views/call.js`, `public/js/main.js`, `public/styles/app.css`.
+
+**Owner Management far-right tab bug — ROOT CAUSE + FIX:**
+- The Owner Center in-page tab bar used inline `style="display:flex;gap:8px;..."` with NO overflow handling. On portrait phones / tablets, the **far-right "User management" tab clipped out of viewport** and appeared missing — the user clicked it, the click landed on whatever was below the tab bar (typically the content area), the visible tab stayed active while the content re-rendered for that (now-invisible) tab. Same pattern in the Moderation tab bar.
+- Fix: replaced inline styles with stable CSS classes `.owner-tabs` / `.mod-tabs` that wrap on desktop and switch to `overflow-x: auto` horizontal scroll on `max-width: 700px`. Stable `owner-tab-<name>` / `mod-tab-<name>` IDs, `role="tab"`/`role="tablist"`/`role="tabpanel"` for ARIA, `aria-selected` toggling. Defensive `!validTabs.includes(name) → 'roles'` fallback. `scrollIntoView({ inline: 'center' })` on every setActive so the active tab is always visible on narrow screens.
+
+**WebRTC hardening (lib/call.js):**
+- `isFromParticipant(payload)` gate in the signaling handler — drops any signal whose `from` UID is not the other participant or self. Server-side RLS on `calls` / `call_ice_candidates` is the primary defense; this is belt-and-braces.
+- ICE restart on `connectionstate === 'failed'` (was hard-hangup immediately).
+- 10s reconnect timer on `disconnected` before attempting ICE restart.
+- 50s caller-side call timeout (was infinite — UI could ring forever).
+- `bye` broadcast on teardown so the other side drops its channel.
+- Idempotent track-add (`getSenders()` dedup before `addTrack`).
+- `friendlyMediaError(NotAllowedError|NotFoundError|NotReadableError|OverconstrainedError)` → useful toast text.
+- Fixed `getUserId()` (was `state.profile ? null` — returned null always).
+- `forceHangup()` for logout/hard-reset cleanup.
+- `isMicOn()` / `isCamOn()` expose real `MediaStreamTrack.enabled` state.
+- `setMinimized()` / `toggleMinimize()` / `isMinimized()` for the floating bubble.
+- ICE servers array accepts optional `window.SUPABASE_CONFIG.iceServers` override (TURN-ready architecture).
+
+**Floating active-call bubble (Phase 4 from brief §18-20):**
+- Active call panel now has 2 modes: full + minimized. Panel is rendered on `document.body` so it persists across view changes.
+- Minimized = draggable bubble with avatar + name + duration + mic + cam (video only) + hangup. Tap bubble to restore.
+- PointerEvents API for drag (touch + mouse + pen). Position stored on `activeCall.position` so it survives `renderActive` rebuilds.
+- 1s `panelTimer` ticks the duration display and refreshes mute/cam icons when the lib flips them.
+- `resetCallUI()` exported, wired into `main.js` `kicked-banned` path.
+- Landscape phone (`orientation: landscape` + `max-height: 500px`): smaller panel + tiles.
+- Portrait phone (`max-width: 480px`): full-width panel.
+- `env(safe-area-inset-bottom)` respected on `.call-active-panel` and `.composer`.
+
+**Responsive audit:**
+- Composer already used `var(--safe-b)` — extended to call panel.
+- No `100vh` anywhere — all `100dvh` throughout.
+- Owner tabs horizontal-scroll breakpoint at 700px (where the topbar starts hiding room-sub at 620px is the natural seam).
+- Owner tab min-height 36px for thumb-friendly tap targets.
+
+**Verified:**
+- 20/20 JS files pass `vm.SourceTextModule` ESM parse (browser-grade, stricter than `node --check`).
+- `node --check` on every modified file.
+- No `new X?.()` constructor-on-optional-chain traps.
+- Owner-tab invariants: 7/7 (rapid switch, fallback, IDs, hash, scrollIntoView).
+- call.js module-surface invariants: 10/10 (subscribe, no-call guards, idempotent imports).
+
+**Files (6):** `public/js/views/admin2.js`, `public/js/views/admin.js`, `public/js/lib/call.js`, `public/js/views/call.js`, `public/js/main.js`, `public/styles/app.css`
+
+**DEPLOY STATUS:** Netlify account `xerxkaszael` has hit the deploy-credit limit (`Account credit usage exceeded - new deploys are blocked until credits are added`). Commits are pushed to GitHub `main` (HEAD = `583b1a2`); live CDN is still on `0346cbb` until the credit issue is resolved. The `build/` directory and `deploy.zip` on disk reflect the new code — a re-deploy with valid credits is the final step.
+
+---
+
 ### Fixed (commit `0346cbb`)
 - **Stuck-on-loading `SyntaxError: Unexpected token ';'. Expected ')'`** — build `c38fbbd` site stuck at "Loading Chit&Chat…" with this JS error. Root cause: commit `bbe3e14` wrapped the 2 DM call buttons (icBtn for voice + video) in a new `el('div', { class: 'dm-call-actions' }, icBtn, icBtn)` wrapper. The wrapper opened **1 new paren** but the closing line `})),` was left with **2 closes** (same as the pre-wrapper code), so the outer `dmViewEl.append(` from line 148 was **never closed**. V8 reported the error at line 181 — but the unclosed `(` was actually from line 148 (V8 reports where it ran out of expected tokens, not where the missing open was). Both `node --check` and strict `vm.SourceTextModule` ESM parsing confirm the bug.
 - **Fix**: 1-char change on line 178 — `})),` → `}))),` (closes: arrow fn + icBtn + dm-call-actions wrapper).
