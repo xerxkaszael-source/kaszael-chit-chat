@@ -25,9 +25,16 @@ let currentOtherProfile = null;
 let dmMessages = [];
 let dmReactions = new Map(); // msgId -> [{emoji, count, by_me}]
 let realtimeChannel = null;
+let typingDmChannel = null;     // per-conversation typing broadcast
+let reactionsChannel = null;   // postgres_changes for message_reactions_dm (visible-window filtered)
+let readsChannel = null;       // postgres_changes for message_reads (own messages from other side)
 let draftSaveTimer = null;
 let replyToMsg = null;
 let editingMsg = null;
+let visibleMsgIds = [];        // for reaction subscription filter
+let ownMsgIds = new Set();     // for read-receipt subscription filter
+let pendingReadMarks = new Set(); // debounced read-mark queue
+let readMarkTimer = null;
 
 // Short text reaction tokens (Flaticon UIcons policy: no emoji as UI icons).
 // Token choices mirror common Slack/Discord quick reactions for muscle memory.
@@ -58,10 +65,9 @@ export async function openDm(otherId, convId = null) {
     return;
   }
 
-  // fetch other user profile
-  const { data: profs } = await sb.from('profiles').select('*').eq('id', otherId).maybeSingle();
-  currentOtherProfile = profs || { id: otherId, username: 'unknown', display_name: 'Unknown', avatar_color: '#888' };
-  state.profiles.set(otherId, currentOtherProfile);
+  // fetch other user profile (cached in state.profiles, hydrate sender on realtime too)
+  await ensureProfile(otherId);
+  currentOtherProfile = state.profiles.get(otherId) || { id: otherId, username: 'unknown', display_name: 'Unknown', avatar_color: '#888' };
 
   await renderDmView();
 }
@@ -76,9 +82,12 @@ export async function renderDmView() {
   drawShell();
   await loadMessages();
   subscribeRealtime();
-  // mark read
+  subscribeTyping();
+  subscribeReactionsRealtime();
+  subscribeReadsRealtime();
+  // Queue initial read mark; will be flushed by debounced flusher.
   if (dmMessages.length > 0) {
-    markDmRead(currentConvId, dmMessages[dmMessages.length - 1].id).catch(() => {});
+    queueReadMark(dmMessages[dmMessages.length - 1].id);
   }
 }
 
@@ -150,13 +159,15 @@ async function drawMessages() {
 
 function renderMessage(m) {
   const mine = m.sender_id === me().id;
-  const wrap = el('div', { class: `dm-msg ${mine ? 'mine' : 'theirs'}` });
+  const wrap = el('div', { class: `dm-msg ${mine ? 'mine' : 'theirs'}${m._failed ? ' failed' : ''}` });
   wrap.append(avatar({ id: m.sender_id, username: m.sender_username, display_name: m.sender_display_name, avatar_color: m.sender_avatar_color }, { size: 'xs' }));
   wrap.append(el('div', { class: 'dm-bubble' },
     el('div', { class: 'dm-text', html: richText(m.content) }),
     el('div', { class: 'dm-meta' },
       el('span', { class: 'dm-time' }, fmtTime(m.created_at)),
       m.edited_at ? el('span', { class: 'dm-edited' }, '(edited)') : null,
+      mine && m.id ? el('span', { class: `dm-read${m.read_by_other ? ' read' : ''}`, title: m.read_by_other ? 'Read' : 'Sent' }, m.read_by_other ? '✓✓' : '✓') : null,
+      m._failed ? el('span', { class: 'dm-failed-icon' }, '!') : null,
       reactionRow(m.id))));
   wrap.append(messageActions(m, mine));
   return wrap;
@@ -301,6 +312,27 @@ function handleInput(e) {
   draftSaveTimer = setTimeout(() => {
     setDraft(currentConvId, e.target.value).catch(() => {});
   }, 600);
+  // typing broadcast — only if we're connected to a DM with someone
+  announceOwnTyping();
+}
+
+// ---- typing broadcast (own → other side) ----
+let ownTypingLastSent = 0;
+let ownTypingStopTimer = null;
+function announceOwnTyping() {
+  if (!typingDmChannel || !me()) return;
+  const now = Date.now();
+  if (now - ownTypingLastSent < 1500) return;
+  ownTypingLastSent = now;
+  typingDmChannel.send({
+    type: 'broadcast',
+    event: 'typing',
+    payload: { uid: me().id, name: me().display_name || me().username }
+  }).catch(() => {});
+  clearTimeout(ownTypingStopTimer);
+  ownTypingStopTimer = setTimeout(() => {
+    typingDmChannel?.send({ type: 'broadcast', event: 'typing_stop', payload: { uid: me().id } }).catch(() => {});
+  }, 2500);
 }
 
 async function send() {
@@ -338,18 +370,22 @@ async function send() {
     _pending: true
   };
   dmMessages.push(optMsg);
+  ownMsgIds.add(clientMsgId);
   drawMessages().then(scrollToBottom);
 
   try {
     const r = await sendDmMessage(currentConvId, content, clientMsgId, replyToMsg?.id || null);
     replyToMsg = null;
     updateComposerHints();
-    // replace optimistic with real
+    // replace optimistic with real — server returns the canonical message_id
     const idx = dmMessages.findIndex(m => m.id === clientMsgId);
-    if (idx >= 0) dmMessages[idx].id = r.message_id;
+    if (idx >= 0) {
+      dmMessages[idx].id = r.message_id;
+      ownMsgIds.delete(clientMsgId);
+      ownMsgIds.add(r.message_id);
+    }
     drawMessages().then(scrollToBottom);
   } catch (e) {
-    // mark failed
     const idx = dmMessages.findIndex(m => m.id === clientMsgId);
     if (idx >= 0) dmMessages[idx]._failed = true;
     drawMessages();
@@ -362,29 +398,198 @@ function scrollToBottom() {
   if (body) body.scrollTop = body.scrollHeight;
 }
 
+// ---- ensure profile in state.profiles (used by sender-hydrate in realtime handlers) ----
+async function ensureProfile(uid) {
+  if (!uid) return null;
+  const cached = state.profiles.get(uid);
+  if (cached && cached.username) return cached;
+  try {
+    const { data } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+    if (data) {
+      state.profiles.set(uid, data);
+      return data;
+    }
+  } catch {}
+  return cached || null;
+}
+
+// ---- private channel: direct_messages (server-side filter by conversation_id) ----
+// Authorization enforced by RLS on direct_messages + the postgres_changes filter. Only
+// members of the conversation can SELECT it; the realtime publication respects RLS.
 function subscribeRealtime() {
   if (realtimeChannel) {
-    sb.removeChannel(realtimeChannel);
+    try { sb.removeChannel(realtimeChannel); } catch {}
     realtimeChannel = null;
   }
   realtimeChannel = sb.channel(`dm:${currentConvId}`)
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'direct_messages', filter: `conversation_id=eq.${currentConvId}` },
-      payload => {
+      async (payload) => {
         const m = payload.new;
-        if (dmMessages.some(x => x.id === m.id)) return; // already have (from optimistic)
-        // hydrate
-        dmMessages.push({ ...m, sender_username: '?', sender_display_name: '?', sender_avatar_color: '#888' });
+        if (!m || dmMessages.some(x => x.id === m.id)) return; // already have (from optimistic)
+        // Hydrate sender profile — required because direct_messages has no FK join
+        const sender = await ensureProfile(m.sender_id);
+        const hydrated = {
+          ...m,
+          sender_username: sender?.username || '?',
+          sender_display_name: sender?.display_name || sender?.username || 'Unknown',
+          sender_avatar_color: sender?.avatar_color || '#888'
+        };
+        dmMessages.push(hydrated);
+        if (sender) state.profiles.set(m.sender_id, sender);
+        // ownMsgIds refreshed after push so reads subscription picks up the new msg
+        if (m.sender_id === me().id) ownMsgIds.add(m.id);
         drawMessages().then(scrollToBottom);
-        // mark read since user is viewing
-        markDmRead(currentConvId, m.id).catch(() => {});
+        // Queue read mark if message is visible and not from us
+        if (m.sender_id !== me().id) queueReadMark(m.id);
+      })
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'direct_messages', filter: `conversation_id=eq.${currentConvId}` },
+      (payload) => {
+        const m = payload.new;
+        const i = dmMessages.findIndex(x => x.id === m.id);
+        if (i >= 0) {
+          // Preserve hydrated sender fields
+          dmMessages[i] = { ...dmMessages[i], ...m, sender_username: dmMessages[i].sender_username,
+                            sender_display_name: dmMessages[i].sender_display_name,
+                            sender_avatar_color: dmMessages[i].sender_avatar_color };
+          drawMessages();
+        }
       })
     .subscribe();
 }
 
-export function cleanupDmRealtime() {
-  if (realtimeChannel) {
-    sb.removeChannel(realtimeChannel);
-    realtimeChannel = null;
+// ---- per-conversation typing broadcast ----
+// Each open DM gets its own broadcast channel so typing events don't leak between
+// conversations. Channel is public broadcast, scope enforced client-side — but typing
+// payloads carry no content, only "X is typing".
+function subscribeTyping() {
+  if (typingDmChannel) {
+    try { sb.removeChannel(typingDmChannel); } catch {}
+    typingDmChannel = null;
   }
+  typingDmChannel = sb.channel(`typing-dm:${currentConvId}`, { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'typing' }, ({ payload }) => {
+      if (!payload || payload.uid !== currentOtherId) return;
+      showTypingIndicator(payload.name);
+    })
+    .on('broadcast', { event: 'typing_stop' }, ({ payload }) => {
+      if (!payload || payload.uid !== currentOtherId) return;
+      hideTypingIndicator();
+    })
+    .subscribe();
+}
+
+// ---- reactions realtime: refresh visible-window reactions on any change ----
+// message_reactions_dm has RLS restricting visibility to conversation members, so the
+// subscription is safe. We don't filter by message_id (postgres_changes filter on
+// message_id would require enumerating all visible IDs which changes on scroll).
+function subscribeReactionsRealtime() {
+  if (reactionsChannel) {
+    try { sb.removeChannel(reactionsChannel); } catch {}
+    reactionsChannel = null;
+  }
+  reactionsChannel = sb.channel('dm-reactions')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions_dm' }, async () => {
+      const ids = dmMessages.map(m => m.id);
+      if (!ids.length) return;
+      try {
+        const rxs = await fetchDmReactions(ids);
+        dmReactions.clear();
+        for (const r of rxs) {
+          if (!dmReactions.has(r.message_id)) dmReactions.set(r.message_id, []);
+          dmReactions.get(r.message_id).push(r);
+        }
+        drawMessages();
+      } catch {}
+    })
+    .subscribe();
+}
+
+// ---- reads realtime: when the OTHER side marks our messages as read ----
+function subscribeReadsRealtime() {
+  if (readsChannel) {
+    try { sb.removeChannel(readsChannel); } catch {}
+    readsChannel = null;
+  }
+  readsChannel = sb.channel('dm-reads')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reads' }, (payload) => {
+      const r = payload.new;
+      if (!r || r.user_id !== currentOtherId) return;
+      const m = dmMessages.find(x => x.id === r.message_id);
+      if (m && m.sender_id === me().id) {
+        m.read_by_other = true;
+        drawMessages();
+      }
+    })
+    .subscribe();
+}
+
+// ---- typing indicator UI ----
+let typingIndicatorTimer = null;
+function showTypingIndicator(name) {
+  const body = document.getElementById('dm-body');
+  if (!body) return;
+  let ind = document.getElementById('dm-typing-indicator');
+  if (!ind) {
+    ind = el('div', { id: 'dm-typing-indicator', class: 'dm-typing' },
+      el('div', { class: 'typing-dots' }, el('span'), el('span'), el('span')),
+      el('span', { class: 'typing-name' }, ''));
+    body.append(ind);
+  }
+  ind.querySelector('.typing-name').textContent = `${name} is typing…`;
+  ind.style.display = 'flex';
+  scrollToBottom();
+  clearTimeout(typingIndicatorTimer);
+  typingIndicatorTimer = setTimeout(hideTypingIndicator, 5000);
+}
+function hideTypingIndicator() {
+  const ind = document.getElementById('dm-typing-indicator');
+  if (ind) ind.style.display = 'none';
+  clearTimeout(typingIndicatorTimer);
+}
+
+// ---- debounced batch read-mark ----
+// Per brief §13: do not write on every message — debounce/batch. Flush the
+// highest message_id in pendingReadMarks every 1.5s of viewing.
+function queueReadMark(msgId) {
+  if (!msgId || !currentConvId) return;
+  pendingReadMarks.add(msgId);
+  clearTimeout(readMarkTimer);
+  readMarkTimer = setTimeout(flushReadMarks, 1500);
+}
+async function flushReadMarks() {
+  if (!pendingReadMarks.size || !currentConvId) return;
+  const ids = [...pendingReadMarks];
+  pendingReadMarks.clear();
+  // pick the latest message by created_at — that's our "through" mark
+  let highest = null, highestTs = -1;
+  for (const id of ids) {
+    const m = dmMessages.find(x => x.id === id);
+    const ts = m ? new Date(m.created_at).getTime() : 0;
+    if (ts > highestTs) { highestTs = ts; highest = id; }
+  }
+  if (!highest) return;
+  try {
+    await markDmRead(currentConvId, highest);
+    // multi-tab: broadcast claim so other tabs don't re-fire the same RPC
+    try { localStorage.setItem(`chc:dm:read:${currentConvId}`, JSON.stringify({ id: highest, at: Date.now() })); } catch {}
+  } catch {
+    for (const id of ids) pendingReadMarks.add(id);
+  }
+}
+
+export function cleanupDmRealtime() {
+  for (const ref of [realtimeChannel, typingDmChannel, reactionsChannel, readsChannel]) {
+    if (ref) {
+      try { sb.removeChannel(ref); } catch {}
+    }
+  }
+  realtimeChannel = typingDmChannel = reactionsChannel = readsChannel = null;
+  hideTypingIndicator();
+  clearTimeout(readMarkTimer);
+  clearTimeout(typingIndicatorTimer);
+  pendingReadMarks.clear();
+  visibleMsgIds = [];
+  ownMsgIds.clear();
 }

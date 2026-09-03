@@ -691,3 +691,66 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
   .inbox-row { padding: 10px 12px; }
   .dm-actions { opacity: 1; }
 }
+
+/* ============================================================
+   DM view — typing indicator (Phase 4a)
+   ============================================================ */
+.dm-typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-3, #888);
+  font-style: italic;
+  animation: dm-typing-fade-in .18s ease-out;
+}
+.dm-typing .typing-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.dm-typing .typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.dm-typing .typing-dots span:nth-child(2) { animation-delay: .15s; }
+.dm-typing .typing-dots span:nth-child(3) { animation-delay: .30s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: .4; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+@keyframes dm-typing-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-typing .typing-dots span { animation: none; }
+  .dm-typing { animation: none; }
+}
+
+/* ============================================================
+   DM view — read receipt indicator (Phase 4a/b)
+   ============================================================ */
+.dm-msg.mine .dm-read {
+  font-size: 10px;
+  color: var(--accent, #4a9eff);
+  margin-left: 4px;
+  transition: opacity .2s;
+}
+.dm-msg.mine .dm-read:not(.read) { opacity: 0; }
+
+/* ============================================================
+   DM view — failed message state (Phase 4a)
+   ============================================================ */
+.dm-msg.failed .dm-bubble {
+  border-color: var(--danger, #e74c3c);
+  opacity: .75;
+}
+.dm-msg.failed .dm-failed-icon {
+  color: var(--danger, #e74c3c);
+  font-size: 11px;
+  margin-left: 4px;
+}
