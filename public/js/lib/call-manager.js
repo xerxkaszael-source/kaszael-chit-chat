@@ -193,6 +193,27 @@ export function mountCallManager() {
   // 5. Render whatever we have (likely nothing on fresh mount).
   renderIncoming();
   renderActive();
+
+  // 6. Start the permission diagnostic panel if dev enabled it via the
+  //    console: `window.__CHC_PERM_DEBUG__ = true`.
+  try { startPermDebugOverlay(); } catch {}
+
+  // Expose a small console API for runtime debugging.
+  try {
+    if (typeof window !== 'undefined') {
+      window.chcCallDebug = Object.assign(window.chcCallDebug || {}, {
+        manager: getDebugSnapshot,
+        state: () => ({ activeCall: getActive(), incomingCall: _incomingCall, mounted }),
+        accept: () => doAccept(),
+        decline: () => doDecline(),
+        hangup: () => import('./call.js').then(({ hangup }) => hangup()),
+        permEnable: () => { window.__CHC_PERM_DEBUG__ = true; startPermDebugOverlay(); },
+        permDisable: () => { window.__CHC_PERM_DEBUG__ = false; const e = document.getElementById('chc-perm-debug'); if (e) e.remove(); },
+        debugEnable: () => { window.__CHC_HIDE_DEBUG__ = false; setDebugLine('re-enabled'); },
+        debugDisable: () => { window.__CHC_HIDE_DEBUG__ = true; const e = document.getElementById('chc-call-debug'); if (e) e.remove(); },
+      });
+    }
+  } catch {}
 }
 
 let _reconnectInFlight = false;
@@ -269,6 +290,7 @@ function handleCallEvent(ev) {
   console.info('[chc-call-manager] call-bus event', ev.type, ev.call ? ('call=' + (ev.call.callId||'?').slice(0,8)) : '');
   _debug.lastEvent = `bus:${ev.type}${ev.call ? ' call='+(ev.call.callId||'?').slice(0,8) : ''}`;
   if (ev.type === 'incoming') {
+    // Callee sees the incoming bubble. State = incoming_ringing.
     _incomingCall = {
       id: ev.call.callId,
       callerId: ev.call.otherId,
@@ -278,10 +300,33 @@ function handleCallEvent(ev) {
     playRingtone();
     armIncomingExpiry();
   } else if (ev.type === 'state' || ev.type === 'local-stream' || ev.type === 'remote-track') {
-    // Stop ringtone as soon as call moves past ringing (either side).
-    if (ev.call && ev.call.state !== 'ringing' && ev.call.state !== 'calling') {
-      stopRingtone();
+    // CRITICAL: Bug #1 fix — only clear the incoming modal when the call
+    // state has moved PAST incoming_ringing/accepting. Until then, the
+    // incoming modal stays visible while we transition through accepting
+    // → connecting → connected.
+    const cur = ev.call;
+    const pastIncoming = cur && cur.state !== 'incoming_ringing' && cur.state !== 'accepting';
+    if (pastIncoming) {
+      // Clear incoming modal if this is the same call we were ringing on.
+      if (_incomingCall && cur.callId === _incomingCall.id) {
+        _incomingCall = null;
+        stopRingtone();
+        clearTimeout(_incomingExpiryTimer); _incomingExpiryTimer = null;
+      }
+    } else if (cur && cur.state === 'accepting') {
+      // While accepting, the modal stays but we add a "Connecting…" overlay.
+      const modal = document.getElementById('call-incoming-modal');
+      if (modal) {
+        const card = modal.querySelector('.call-incoming-card');
+        if (card && !card.querySelector('.chc-accepting-pill')) {
+          const pill = el('div',
+            { class: 'chc-accepting-pill', style: 'margin-top:8px;padding:6px 12px;background:rgba(255,255,255,.12);border-radius:999px;font-size:13px;color:#9be7ff;text-align:center' },
+            'Connecting… requesting microphone permission');
+          card.appendChild(pill);
+        }
+      }
     }
+    renderIncoming(); // may remove modal if
     renderActive();
   } else if (ev.type === 'ended') {
     _incomingCall = null;
@@ -290,8 +335,6 @@ function handleCallEvent(ev) {
     renderIncoming();
     renderActive();
   } else if (ev.type === 'rehydrate') {
-    // After refresh, the row exists but WebRTC is gone. Surface a minimal
-    // active-call panel so the user can hang up cleanly.
     const c = ev.call || {};
     if (!_incomingCall && c.caller_id && c.callee_id) {
       _incomingCall = {
@@ -312,6 +355,9 @@ function renderIncoming() {
   if (!_incomingCall) { stopRingtone(); return; }
   const other = state.profiles.get(_incomingCall.callerId) ||
                 { id: _incomingCall.callerId, display_name: 'Unknown', avatar_color: '#888' };
+  const cur = getActive();
+  const isAccepting = cur && cur.callId === _incomingCall.id && cur.state === 'accepting';
+  const acceptLabel = isAccepting ? 'Accepting…' : 'Accept';
   const modal = el('div', { id: 'call-incoming-modal', class: 'call-incoming-backdrop' },
     el('div', { class: 'call-incoming-card', role: 'dialog', 'aria-modal': 'true' },
       el('div', { class: 'call-incoming-header' },
@@ -325,19 +371,37 @@ function renderIncoming() {
         el('button', { class: 'btn danger large',
             onclick: () => doDecline() }, ic('phone-slash'), ' Decline'),
         el('button', { class: 'btn primary large',
-            onclick: () => doAccept() }, ic('phone-call'), ' Accept'))));
+            onclick: () => doAccept(), disabled: isAccepting ? '' : null }, ic('phone-call'), ' ', acceptLabel))));
   document.body.append(modal);
 }
 
 async function doAccept() {
   if (!_incomingCall) return;
   const callId = _incomingCall.id;
-  _incomingCall = null;
-  renderIncoming();
+  const acceptBtn = document.querySelector('#call-incoming-modal .btn.primary');
+  // Idempotent: if already accepting, no-op.
+  if (acceptBtn) {
+    if (acceptBtn.disabled) return;
+    acceptBtn.disabled = true;
+    acceptBtn.textContent = 'Accepting…';
+  }
+  // DON'T clear _incomingCall here — Bug #1 fix: keep the modal visible
+  // until lib/call.accept() transitions state past incoming_ringing.
+  // The manager will hide the modal when state machine reaches
+  // 'connected' / 'failed' / 'declined' (see handleCallEvent below).
   stopRingtone();
   clearTimeout(_incomingExpiryTimer); _incomingExpiryTimer = null;
-  try { await accept(); } catch (e) {
+  try {
+    await accept();
+  } catch (e) {
     toast(e.chc && e.chc.text || e.message || 'Accept failed', 'error');
+    if (acceptBtn) { acceptBtn.disabled = false; }
+  }
+  // If still in incoming_ringing after await (rare, e.g. accept returned
+  // early because activeCall was null), reset _incomingCall and re-render.
+  const cur = getActive();
+  if (!cur || cur.callId !== callId) {
+    // activeCall was teardown'd; nothing to do.
   }
 }
 
@@ -368,11 +432,42 @@ function buildActivePanel(a) {
   const other = state.profiles.get(a.otherId) ||
                 { id: a.otherId, display_name: 'In call', avatar_color: '#888' };
   const minimized = !!a.minimized;
+  // iOS-safe <video> tags: autoplay + playsinline + muted (local) per spec §12.
   const remoteV = a.kind === 'video'
-    ? el('video', { class: 'call-tile remote', autoplay: '', playsinline: '' }) : null;
+    ? el('video', { class: 'call-tile remote', autoplay: '', playsinline: '', muted: '' }) : null;
   const localV = a.kind === 'video'
-    ? el('video', { class: 'call-tile local', autoplay: '', muted: '', playsinline: '' }) : null;
+    ? el('video', { class: 'call-tile local', autoplay: '', playsinline: '', muted: '' }) : null;
   const avatarBig = (!minimized && a.kind === 'voice') ? avatar(other, { size: 'xl' }) : null;
+
+  // Permission-error banner (spec §10 / §35) — show clear UI when media
+  // acquisition failed. Always-visible so the user can read and retry.
+  const permErr = a._permissionError;
+  const errorBanner = permErr ? el('div',
+    { class: 'call-perm-error', style: 'background:rgba(231,76,60,.18);border:1px solid #e74c3c;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12px;line-height:1.45;color:#ffd9d9' },
+    el('div', { style: 'font-weight:700;margin-bottom:4px;color:#ffb3b3' }, ic('triangle-warning'), ' Media access failed'),
+    el('div', {}, permErr),
+    el('button',
+      { class: 'btn sm', style: 'margin-top:8px',
+        onclick: async () => {
+          // Re-acquire media. The user just saw the OS prompt again.
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+              video: a.kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false,
+            });
+            a.localStream = stream;
+            a._permissionError = null;
+            import('./call.js').then(({ getActive }) => {
+              const c = getActive();
+              if (c) c.state = 'connecting';
+            });
+            renderActive();
+          } catch (e) {
+            a._permissionError = (e && (e.message || String(e))) || 'Permission denied.';
+            renderActive();
+          }
+        } },
+      ic('rotate-right'), ' Try again')) : null;
 
   const micBtn = el('button',
     { class: `call-ctrl${isMicOn() ? '' : ' muted'}`, title: isMicOn() ? 'Mute mic' : 'Unmute mic',
@@ -393,6 +488,16 @@ function buildActivePanel(a) {
       'aria-label': minimized ? 'Expand' : 'Minimize',
       onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
     ic(minimized ? 'arrow-up-right-and-arrow-down-left-from-center' : 'arrow-down-right-and-arrow-up-left-from-center'));
+
+  // Show a "connecting…" pill during accepting/connecting (Bug #1 — UI
+  // stays visible while media/WebRTC settle).
+  const connPill = (a.state === 'accepting' || a.state === 'connecting' || a.state === 'outgoing_calling' || a.state === 'outgoing_ringing')
+    ? el('div', { class: 'call-conn-pill',
+        style: 'margin-top:6px;padding:4px 10px;background:rgba(74,158,255,.18);color:#9be7ff;border-radius:999px;font-size:11px;text-align:center;font-weight:600;text-transform:uppercase;letter-spacing:.04em' },
+      a.state === 'accepting' ? 'Requesting permission…' :
+      a.state === 'connecting' ? 'Connecting…' :
+      a.state === 'outgoing_calling' ? 'Calling…' : 'Ringing…')
+    : null;
 
   const bubbleRow = el('div', { class: 'call-active-bubble-row' },
     avatar(other, { size: 'sm', showPresence: false }),
@@ -417,6 +522,8 @@ function buildActivePanel(a) {
     minimized ? null : avatarBig,
     minimized ? null : el('div', { class: 'call-active-name' }, other.display_name || 'In call'),
     minimized ? null : el('div', { class: 'call-active-state' }, a.state),
+    connPill,
+    errorBanner,
     minimized ? null : el('div', { class: 'call-active-controls' },
       micBtn, camBtn, minimizeBtn, hangupBtn));
 
@@ -570,3 +677,152 @@ export function resetCallUI() {
   stopRingtone();
   clearTimeout(_incomingExpiryTimer); _incomingExpiryTimer = null;
 }
+
+// =====================================================================
+// iOS / iPhone Chrome WebKit reconnect lifecycle (spec §14–17)
+// =====================================================================
+// iOS Safari + Chrome (both use WebKit on iOS) aggressively suspend WebSocket
+// connections when:
+//   - the page is backgrounded (visibilitychange → hidden)
+//   - the device screen locks
+//   - iOS puts the tab in a frozen state
+// When the page returns to foreground, the WebSocket may be CLOSED without
+// firing an explicit `error` event. Without recovery, the user misses every
+// incoming call until they manually reload.
+//
+// Defense in depth:
+//   1. On visibilitychange → visible, force a re-subscribe (no-op if healthy).
+//   2. On pageshow, do the same (covers iOS "page restored from frozen" path).
+//   3. On online event, do the same.
+//   4. We never destroy the channel — supabase-js's channel.subscribe()
+//      transparently reconnects the underlying socket if needed.
+//   5. If the channel returns SUBSCRIBED, no duplicate listeners are created
+//      because we only re-call subscribe(), not channel().
+//   6. pollActive() re-validates the authoritative server state on visibility
+//      return — if there's an active row, the user sees the bubble immediately.
+let _recoveryInFlight = false;
+function handleRecovery() {
+  if (!mounted) return;
+  if (_recoveryInFlight) return;
+  _recoveryInFlight = true;
+  setTimeout(async () => {
+    try {
+      const uid = me()?.id;
+      if (uid && _pgChannel) {
+        // Re-verify auth session (iOS sometimes kills localStorage).
+        try {
+          const { data } = await sb.auth.getSession();
+          if (!data || !data.session) {
+            console.warn('[chc-call-manager] recovery: no auth session');
+            setDebugLine('recovery: no session');
+            _recoveryInFlight = false;
+            return;
+          }
+        } catch (e) { console.warn('[chc-call-manager] getSession failed', e); }
+        // Re-subscribe the channel — supabase-js reuses the existing socket if alive.
+        try { _pgChannel.subscribe(); } catch (e) { console.warn('[chc-call-manager] re-subscribe failed', e); }
+        // Authoritative server read: pick up any active row that arrived while
+        // we were disconnected (Bug #2 fix).
+        try { await pollActive(); } catch {}
+        setDebugLine('recovery: re-subscribed');
+      }
+    } finally {
+      _recoveryInFlight = false;
+    }
+  }, 250); // small debounce — iOS fires multiple events in rapid succession
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  // Visibility (covers iOS Safari + Chrome on iPhone)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.info('[chc-call-manager] visibility → visible — running recovery');
+      handleRecovery();
+    }
+  });
+  // pageshow (covers bfcache restoration on iOS)
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) {
+      console.info('[chc-call-manager] pageshow (bfcache) — running recovery');
+      handleRecovery();
+    }
+  });
+  // Generic pagehide — DON'T teardown, just observe (so we know to reconnect on return).
+  // Network recovery
+  window.addEventListener('online', () => {
+    console.info('[chc-call-manager] online — running recovery');
+    handleRecovery();
+  });
+  // Offline — log diagnostic; supabase-js will surface CHANNEL_ERROR/TIMED_OUT.
+  window.addEventListener('offline', () => {
+    console.warn('[chc-call-manager] offline — incoming call delivery may stall');
+    _debug.lastError = 'browser offline';
+    setDebugLine('offline');
+  });
+}
+
+// =====================================================================
+// Permission diagnostic panel (spec §13) — dev only
+// =====================================================================
+// Show a small fixed panel with media permission state so the user (and
+// the dev) can see at a glance:
+//   - isSecureContext
+//   - mediaDevices availability
+//   - microphone + camera permission state (where queryable)
+//   - current call state
+//   - last permission error
+//
+// Toggle with: window.__CHC_PERM_DEBUG__ = true (default false — quieter
+// than the realtime overlay).
+let _permPollTimer = null;
+async function _queryPerm(name) {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) return 'unsupported';
+    const r = await navigator.permissions.query({ name });
+    return r.state; // 'granted' | 'denied' | 'prompt'
+  } catch (e) {
+    return 'unsupported';
+  }
+}
+function ensurePermDebugOverlay() {
+  try {
+    if (typeof window === 'undefined') return;
+    if (!window.__CHC_PERM_DEBUG__) return;
+  } catch { return; }
+  if (document.getElementById('chc-perm-debug')) return;
+  const o = el('div',
+    { id: 'chc-perm-debug',
+      style: 'position:fixed;right:8px;bottom:8px;z-index:2147483645;background:rgba(0,0,0,.85);color:#ffd479;font:11px/1.4 monospace;padding:10px 12px;border-radius:8px;max-width:340px;pointer-events:none;white-space:pre-wrap;word-break:break-word' },
+    '[PERM] booting…');
+  document.body.appendChild(o);
+  async function refresh() {
+    if (!document.getElementById('chc-perm-debug')) return;
+    const mic = await _queryPerm('microphone');
+    const cam = await _queryPerm('camera');
+    const cur = getActive();
+    o.textContent =
+      `[PERM]\n` +
+      `isSecureContext: ${window.isSecureContext ? 'YES' : 'NO'}\n` +
+      `mediaDevices: ${(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? 'YES' : 'NO'}\n` +
+      `microphone: ${mic}\n` +
+      `camera: ${cam}\n` +
+      `UA: ${(navigator.userAgent || '').slice(0, 60)}\n` +
+      `active: ${cur ? cur.callId.slice(0,8) + ' state=' + cur.state : '-'}\n` +
+      `permErr: ${cur && cur._permissionError ? cur._permissionError.slice(0,80) : '-'}`;
+  }
+  refresh();
+  clearInterval(_permPollTimer);
+  _permPollTimer = setInterval(refresh, 2000);
+}
+export function startPermDebugOverlay() {
+  ensurePermDebugOverlay();
+}
+
+// Re-evaluate permission debug after each render in case mic/cam state changed.
+const _origRenderActive = renderActive;
+function renderActiveWithPermDebug() {
+  _origRenderActive();
+  ensurePermDebugOverlay();
+}
+// Replace the public renderActive with the wrapped version. (We still call
+// the original internally via the variable capture above.)

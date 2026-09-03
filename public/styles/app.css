@@ -943,6 +943,71 @@ a { color: var(--accent, #6c8cff); text-decoration: none; }
     min-width: 0; max-width: calc(100vw - 16px);
   }
 }
+
+/* Connecting / Calling pill (shows during state transitions where the
+   active panel needs to stay visible — see Bug #1 fix in lib/call-manager). */
+.call-conn-pill {
+  margin-top: 6px;
+  padding: 4px 10px;
+  background: rgba(74,158,255,.18);
+  color: var(--accent, #4a9eff);
+  border-radius: 999px;
+  font-size: 11px;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .55; }
+}
+
+/* Permission-error banner — appears when getUserMedia was denied or
+   failed. User can click "Try again" to re-trigger the browser prompt. */
+.call-perm-error {
+  background: rgba(231,76,60,.18);
+  border: 1px solid var(--danger, #e74c3c);
+  border-radius: var(--radius-m, 8px);
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #ffd9d9;
+  width: 100%;
+}
+.call-perm-error .call-perm-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: #ffb3b3;
+}
+
+/* Accepting pill (overlay on the incoming modal — see handleCallEvent). */
+.chc-accepting-pill {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(255,255,255,.12);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--accent, #9be7ff);
+  text-align: center;
+}
+
+/* iOS-safe-area aware positioning for the floating active panel.
+   Spec §33: panel must not be hidden behind iOS UI / notch / home
+   indicator. CSS already uses --safe-b (bottom safe-area inset); add
+   top inset for landscape phones with notch. */
+@supports (padding: max(0px)) {
+  .call-active-panel {
+    bottom: max(calc(16px + var(--safe-b, 0px)), env(safe-area-inset-bottom, 16px));
+    right: max(16px, env(safe-area-inset-right, 16px));
+  }
+  #call-incoming-modal .call-incoming-card {
+    margin-bottom: env(safe-area-inset-bottom, 16px);
+  }
+}
+
 .call-ctrl {
   width: 44px; height: 44px; border-radius: 50%;
   background: var(--bg-3, rgba(255,255,255,0.1));

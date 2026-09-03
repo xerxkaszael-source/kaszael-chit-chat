@@ -10,7 +10,6 @@
 //
 // Authorization: RLS + SECURITY DEFINER RPCs already enforce that only the two
 // participants can see a given call. UI-side gates are belt-and-braces.
-import { state, me } from '../lib/state.js';
 import {
   history as fetchHistory, initiate, getActive
 } from '../lib/call.js';

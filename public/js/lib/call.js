@@ -38,11 +38,86 @@ const EXTRA_ICE = (typeof window !== 'undefined' && window.SUPABASE_CONFIG && Ar
   ? window.SUPABASE_CONFIG.iceServers : [];
 if (EXTRA_ICE.length) ICE_SERVERS.push(...EXTRA_ICE);
 
-let activeCall = null; // { callId, peer, localStream, remoteStream, kind, role, signaling, state, minimized, position }
+// =====================================================================
+// CALL STATE MACHINE
+// =====================================================================
+// The state machine is the single source of truth for call lifecycle.
+// `activeCall.state` is the canonical current state; transitions are
+// validated by `setCallState()` which no-ops invalid transitions.
+//
+// Valid states (per spec §2):
+//   idle             — no call in progress
+//   outgoing_calling — A initiated, awaiting B accept
+//   outgoing_ringing — B's side is ringing (informational)
+//   incoming_ringing — B is seeing the incoming bubble
+//   accepting        — B clicked Accept, requesting media
+//   connecting       — B's media acquired, waiting for WebRTC connect
+//   connected        — WebRTC PeerConnection state = connected
+//   reconnecting     — transient ICE disconnect
+//   declining        — Decline RPC in flight
+//   declined         — terminal: B declined
+//   cancelled        — terminal: A cancelled
+//   busy             — terminal: rejected by busy check
+//   timeout          — terminal: ring/no-answer timeout
+//   failed           — terminal: media or WebRTC failed
+//   ending           — Hangup RPC in flight
+//   ended            — terminal: clean hangup
+//
+// All terminal states are kept in the `callHistory` set so that any
+// leftover timers/callbacks guarded by `if (activeCall?.callId === X)`
+// will correctly see "the call ended, drop the work".
+const TERMINAL_STATES = new Set(['declined', 'cancelled', 'busy', 'timeout', 'failed', 'ended']);
+// Allowed transitions: from → [...to]
+const ALLOWED = {
+  idle:             ['outgoing_calling', 'incoming_ringing'],
+  outgoing_calling:  ['incoming_ringing', 'outgoing_ringing', 'cancelled', 'busy', 'timeout', 'ended', 'failed'],
+  outgoing_ringing:  ['connecting', 'cancelled', 'declined', 'timeout', 'failed', 'ended'],
+  incoming_ringing:  ['accepting', 'declining', 'declined', 'cancelled', 'timeout', 'failed', 'ended'],
+  accepting:        ['connecting', 'failed', 'ended', 'declining'],     // failed = permission denied
+  connecting:       ['connected', 'failed', 'reconnecting', 'ended'],
+  connected:        ['reconnecting', 'ending', 'ended', 'failed'],
+  reconnecting:     ['connected', 'failed', 'ended'],
+  declining:        ['declined', 'ended'],
+  ending:           ['ended', 'failed'],
+  // terminal:
+  declined:         [],
+  cancelled:        [],
+  busy:             [],
+  timeout:          [],
+  failed:           [],
+  ended:            [],
+};
+function isTerminal(s) { return TERMINAL_STATES.has(s); }
+function canTransition(from, to) {
+  if (isTerminal(from)) return false;
+  const allowed = ALLOWED[from] || [];
+  return allowed.includes(to);
+}
+function setCallState(callObj, next) {
+  if (!callObj) return false;
+  if (callObj.state === next) return true; // idempotent
+  if (!canTransition(callObj.state, next)) {
+    console.warn('[chc-call] invalid transition', callObj.state, '→', next, 'for call', callObj.callId);
+    return false;
+  }
+  callObj.state = next;
+  callObj.stateAt = Date.now();
+  return true;
+}
+
+// Module state.
+// `activeCall` is the canonical state for one call. It NEVER disappears
+// during valid transitions — only when the call reaches a terminal state
+// AND teardown is called. The state machine ensures this invariant.
+let activeCall = null;       // { callId, peer, localStream, remoteStream, kind, role, state, minimized, position, kind, ... }
 const _listeners = new Set();
+const _pendingSignalingByCallId = new Map(); // callId → Array<signal msg> (for offer-arrives-before-accept)
 
 export function subscribe(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
 function emit(ev) { for (const fn of _listeners) fn(ev); notify('call'); }
+
+// Per-call timer handles so we can cancel them safely without killing other calls.
+const _callerTimeoutTimerByCallId = new Map();
 
 // ---- helpers ----
 function getUserId() { return state.profile && state.profile.id; }
@@ -60,9 +135,9 @@ function isFromParticipant(payload) {
 
 // 60s caller-side timeout. The DB-side miss_sweep handles server-side cleanup
 // after 60s, but the caller UI should give up and cancel before then so the
-// caller doesn't stare at a ringing screen.
+// caller doesn't stare at a ringing screen. Per-call so each call has its
+// own timeout; clearing one doesn't affect others.
 const CALL_TIMEOUT_MS = 50_000;
-let _callerTimeoutTimer = null;
 
 // ---- initiate (caller) ----
 // In-flight call UUIDs — guards against clicking the caller button twice
@@ -71,7 +146,7 @@ let _callerTimeoutTimer = null;
 // second `call_initiate` RPC that may collide with the first row.
 const _initInFlight = new Set();
 export async function initiate(calleeId, kind = 'voice') {
-  if (activeCall) {
+  if (activeCall && !isTerminal(activeCall.state)) {
     toast(`You're already in a ${activeCall.kind} call`, 'error');
     return null;
   }
@@ -84,41 +159,37 @@ export async function initiate(calleeId, kind = 'voice') {
   try {
     const r = await rpc('call_initiate', { v_callee_id: calleeId, v_kind: kind });
     if (!r?.ok) throw new Error(r?.error || 'initiate_failed');
+    // Build canonical activeCall with state machine.
     activeCall = {
       callId: r.call_id,
       peer: null,
       localStream: null,
       remoteStream: new MediaStream(),
-      kind, role: 'caller', state: 'calling',
+      kind, role: 'caller',
+      // State machine: outgoing_calling (we initiated, waiting for callee)
+      state: 'outgoing_calling',
+      stateAt: Date.now(),
       otherId: calleeId,
       minimized: false,
       position: null,
       startedAt: Date.now(),
-      connectedAt: null
+      connectedAt: null,
+      _acceptInFlight: false,
     };
     setupSignaling();
     emit({ type: 'state', call: activeCall });
-    // Auto-miss timeout: if no accept within 50s, cancel.
-    clearTimeout(_callerTimeoutTimer);
-    _callerTimeoutTimer = setTimeout(() => {
-      if (activeCall && activeCall.callId === r.call_id && activeCall.state !== 'connected') {
-        toast('No answer', 'info');
-        cancel();
-      }
-    }, CALL_TIMEOUT_MS);
+
+    // Per-call-id caller timeout (NOT a module-global timer that could leak).
+    armCallerTimeout(activeCall.callId, CALL_TIMEOUT_MS);
+
     return r.call_id;
   } catch (e) {
-    // Auto-self-recover if server says we're already in a call. This handles
-    // the case where a stale row from a dropped session is blocking us. We
-    // retry ONCE after running the bulk self-recover. If the second attempt
-    // also fails (e.g. genuine concurrent call), we surface the error.
     const msg = (e && (e.message || String(e))) || '';
     if (/CHC:busy/i.test(msg)) {
       try {
         const recovered = await rpc('call_self_recover_all', {});
         if (recovered > 0) {
           toast('Cleared a stale call — retrying…', 'info', 2000);
-          // Brief delay so the RPC settles + DB triggers update.
           await new Promise(r => setTimeout(r, 300));
           const r2 = await rpc('call_initiate', { v_callee_id: calleeId, v_kind: kind });
           if (!r2?.ok) throw new Error(r2?.error || 'initiate_failed_retry');
@@ -127,26 +198,23 @@ export async function initiate(calleeId, kind = 'voice') {
             peer: null,
             localStream: null,
             remoteStream: new MediaStream(),
-            kind, role: 'caller', state: 'calling',
+            kind, role: 'caller',
+            state: 'outgoing_calling',
+            stateAt: Date.now(),
             otherId: calleeId,
             minimized: false,
             position: null,
             startedAt: Date.now(),
-            connectedAt: null
+            connectedAt: null,
+            _acceptInFlight: false,
           };
           setupSignaling();
           emit({ type: 'state', call: activeCall });
-          clearTimeout(_callerTimeoutTimer);
-          _callerTimeoutTimer = setTimeout(() => {
-            if (activeCall && activeCall.callId === r2.call_id && activeCall.state !== 'connected') {
-              toast('No answer', 'info');
-              cancel();
-            }
-          }, CALL_TIMEOUT_MS);
+          armCallerTimeout(activeCall.callId, CALL_TIMEOUT_MS);
           return r2.call_id;
         }
       } catch (innerErr) {
-        // fall through to the error toast below
+        // fall through
       }
     }
     toast(`Call failed: ${msg}`, 'error');
@@ -156,16 +224,36 @@ export async function initiate(calleeId, kind = 'voice') {
   }
 }
 
+// Arm a caller-side timeout for a specific call_id. Cancels itself if the call
+// transitions past `outgoing_calling` or reaches a terminal state, OR if a
+// new call with a different id starts (so we don't leak).
+function armCallerTimeout(callId, ms) {
+  cancelCallerTimeout(callId);
+  const t = setTimeout(() => {
+    _callerTimeoutTimerByCallId.delete(callId);
+    // Only fire if THIS call is still in the right state.
+    if (activeCall && activeCall.callId === callId && activeCall.state === 'outgoing_calling') {
+      console.info('[chc-call] caller timeout for', callId);
+      toast('No answer', 'info');
+      cancel().catch(() => {});
+    }
+  }, ms);
+  _callerTimeoutTimerByCallId.set(callId, t);
+}
+function cancelCallerTimeout(callId) {
+  const t = _callerTimeoutTimerByCallId.get(callId);
+  if (t) { clearTimeout(t); _callerTimeoutTimerByCallId.delete(callId); }
+}
+
 // ---- handle incoming call (callee) ----
 export async function handleIncoming(callId, callerId, kind) {
-  if (activeCall) {
-    // Auto-decline the new one (we're already in a call)
+  // If we're already in a non-terminal call, auto-decline (we're busy).
+  // Use setCallState so the existing call's state machine is consistent.
+  if (activeCall && !isTerminal(activeCall.state)) {
     rpc('call_decline', { v_call_id: callId, v_reason: 'busy' }).catch(() => {});
     return;
   }
-  // Reject if we have this user blocked (defense in depth; server also checks
-  // in call_initiate, but if the block was added between then and now, this
-  // protects us client-side too).
+  // Reject if caller is blocked (defense in depth; server also checks).
   try {
     const blocks = state.blocks || [];
     if (blocks.includes(callerId)) {
@@ -173,56 +261,138 @@ export async function handleIncoming(callId, callerId, kind) {
       return;
     }
   } catch {}
+  // Build the canonical activeCall in the `incoming_ringing` state.
+  // From here, the callee's UI (managed by call-manager.js) shows the
+  // incoming bubble. The state NEVER goes back to null until teardown.
   activeCall = {
-    callId, kind, role: 'callee', state: 'ringing',
+    callId, kind, role: 'callee',
+    state: 'incoming_ringing',
+    stateAt: Date.now(),
     peer: null, localStream: null,
     remoteStream: new MediaStream(),
     otherId: callerId,
     minimized: false,
     position: null,
     startedAt: Date.now(),
-    connectedAt: null
+    connectedAt: null,
+    _acceptInFlight: false,
+    _permissionError: null,
   };
-  // Tell the caller we got the notification (informational; not strictly required)
+  // Inform the caller we got the notification (informational).
   rpc('call_ringing', { v_call_id: callId }).catch(() => {});
   setupSignaling();
   emit({ type: 'incoming', call: activeCall });
-  // The DB miss_sweep RPC marks unanswered calls after 60s.
+  // DB miss_sweep RPC handles 60s timeout server-side.
 }
 
 // ---- accept (callee) ----
+// Atomic state transition: incoming_ringing → accepting → (media) → connecting.
+// CRITICAL: never leaves `activeCall` null between steps (Bug #1 fix).
+// If media fails: transitions to `failed` with `_permissionError` set so
+// the UI can show a retry button — does NOT silently teardown (Bug #1+#3 fix).
 export async function accept() {
   if (!activeCall || activeCall.role !== 'callee') return;
+  if (isTerminal(activeCall.state)) return;
+  // Idempotency: if already accepting, no-op (prevents double-click race).
+  if (activeCall._acceptInFlight) return;
+  activeCall._acceptInFlight = true;
+
+  // Step 1: transition to 'accepting' (UI updates immediately).
+  if (!setCallState(activeCall, 'accepting')) return;
+  cancelCallerTimeout(activeCall.callId);
+  emit({ type: 'state', call: activeCall });
+
   try {
-    // Acquire media BEFORE the RPC so we can answer with media ready
+    // Step 2: secure context check (spec §11).
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      throw makeMediaError('SecurityError',
+        'Page is not in a secure context. Kaszael Chit&Chat requires HTTPS to access the camera/microphone.');
+    }
+
+    // Step 3: mediaDevices availability (spec §11).
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw makeMediaError('NotSupportedError',
+        'Camera/microphone access is not supported in this browser.');
+    }
+
+    // Step 4: acquire media (the user-gesture path; browser shows prompt).
+    //         Voice = audio only. Video = audio + video (spec §8/§9).
     const stream = await acquireMedia(activeCall.kind);
     activeCall.localStream = stream;
-    activeCall.connectedAt = Date.now();
-    clearTimeout(_callerTimeoutTimer);
-    await rpc('call_accept', { v_call_id: activeCall.callId });
-    // Caller will then create the offer; we listen for it on signaling.
-    activeCall.state = 'accepted';
+
+    // Step 5: transition to 'connecting'.
+    if (!setCallState(activeCall, 'connecting')) return;
     emit({ type: 'state', call: activeCall });
+
+    // Step 6: call_accept RPC — server-authoritative state change.
+    //         (If this fails, we surface the error but keep activeCall so the
+    //         user can hangup cleanly.)
+    try {
+      await rpc('call_accept', { v_call_id: activeCall.callId });
+    } catch (rpcErr) {
+      // Server rejected — most likely the call was cancelled/ended.
+      const msg = rpcErr && (rpcErr.message || String(rpcErr)) || '';
+      console.warn('[chc-call] call_accept RPC failed', msg);
+      if (/CHC:not_found/i.test(msg)) {
+        // Caller cancelled before we accepted.
+        if (setCallState(activeCall, 'cancelled')) emit({ type: 'state', call: activeCall });
+        teardown('cancelled');
+        return;
+      }
+      // Otherwise: keep call going, the user can still talk — the server may
+      // eventually time out the row and our caller-side UI will reflect it.
+    }
+
+    // Step 7: signaling — caller may already have sent an offer.
+    //         Process any pending signaling first, then notify caller we're ready.
+    drainPendingSignaling(activeCall.callId);
+    // Caller will create the offer when it sees our 'accepted' UPDATE event
+    // (handled in call-manager.onCallsUpdate).
   } catch (e) {
-    toast(`Cannot start media: ${friendlyMediaError(e)}`, 'error');
-    await decline('media_failed');
+    // Permission or other media error — transition to `failed` with the
+    // error details attached so the UI can show a retry banner.
+    console.warn('[chc-call] accept failed', e);
+    activeCall._permissionError = friendlyMediaError(e, activeCall.kind);
+    if (setCallState(activeCall, 'failed')) emit({ type: 'state', call: activeCall });
+    // Do NOT teardown — the user needs to see the failure + retry option.
+    // They can hangup via the bubble's hangup button.
+  } finally {
+    if (activeCall) activeCall._acceptInFlight = false;
   }
 }
 
+// ---- decline (callee) ----
 export async function decline(reason = 'declined') {
   if (!activeCall) return;
+  if (isTerminal(activeCall.state)) return;
+  if (activeCall.role !== 'callee') return;
+  if (!setCallState(activeCall, 'declining')) return;
+  emit({ type: 'state', call: activeCall });
+  cancelCallerTimeout(activeCall.callId);
   try { await rpc('call_decline', { v_call_id: activeCall.callId, v_reason: reason }); } catch {}
-  teardown('declined');
+  // Use 'declined' if reason is 'declined', else keep the reason text.
+  teardown(reason === 'declined' ? 'declined' : reason);
 }
 
+// ---- cancel (caller before accept) ----
 export async function cancel() {
-  if (!activeCall || activeCall.role !== 'caller') return;
+  if (!activeCall) return;
+  if (activeCall.role !== 'caller') return;
+  if (isTerminal(activeCall.state)) return;
+  cancelCallerTimeout(activeCall.callId);
+  if (!setCallState(activeCall, 'cancelled')) return;
+  emit({ type: 'state', call: activeCall });
   try { await rpc('call_cancel', { v_call_id: activeCall.callId }); } catch {}
   teardown('cancelled');
 }
 
+// ---- hangup (either side, any non-terminal state) ----
 export async function hangup(reason = 'ended') {
   if (!activeCall) return;
+  if (isTerminal(activeCall.state)) return;
+  cancelCallerTimeout(activeCall.callId);
+  if (!setCallState(activeCall, 'ending')) return;
+  emit({ type: 'state', call: activeCall });
   try { await rpc('call_end', { v_call_id: activeCall.callId, v_reason: reason }); } catch {}
   teardown('ended');
 }
@@ -231,28 +401,60 @@ export async function hangup(reason = 'ended') {
 async function acquireMedia(kind) {
   const constraints = {
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    video: kind === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
+    video: kind === 'video'
+      ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+      : false
   };
   return navigator.mediaDevices.getUserMedia(constraints);
 }
 
+// Build a synthetic DOMException-like error for failures we detect BEFORE
+// getUserMedia is called (secure-context, no-mediaDevices). We attach .name
+// so friendlyMediaError's switch can match it.
+function makeMediaError(name, message) {
+  let err;
+  try {
+    err = new DOMException(message, name);
+  } catch (_) {
+    err = new Error(message);
+    err.name = name;
+  }
+  return err;
+}
+
 // Translate the most common getUserMedia errors into a useful toast message.
-function friendlyMediaError(e) {
+// `kind` is 'voice' or 'video' so we can tailor the prompt.
+function friendlyMediaError(e, kind) {
   const msg = (e && (e.message || String(e))) || '';
   const name = e && e.name;
+  // Build rich, actionable messages per spec §10.
+  if (name === 'SecurityError' || /secure context|insecure/i.test(msg)) {
+    return 'Page must be loaded over HTTPS to access the microphone and camera.';
+  }
   if (name === 'NotAllowedError' || /denied|permission/i.test(msg)) {
-    return kind => kind === 'video' ? 'Camera/mic permission denied.' : 'Microphone permission denied.';
+    if (kind === 'video') {
+      return 'Camera/microphone permission denied. Please allow camera AND microphone access for Kaszael Chit&Chat in your browser\u2019s site settings, then try again.';
+    }
+    return 'Microphone permission denied. Please allow microphone access for Kaszael Chit&Chat in your browser\u2019s site settings, then try again.';
   }
   if (name === 'NotFoundError' || /NotFound|not found/i.test(msg)) {
-    return 'No microphone/camera found on this device.';
+    if (kind === 'video') return 'No microphone or camera was detected on this device.';
+    return 'No microphone was detected on this device.';
   }
-  if (name === 'NotReadableError') {
-    return 'Microphone/camera is busy in another app.';
+  if (name === 'NotReadableError' || /in use|busy/i.test(msg)) {
+    return 'Microphone or camera is in use by another application. Close other apps and try again.';
   }
-  if (name === 'OverconstrainedError') {
-    return 'Camera does not support the requested settings.';
+  if (name === 'OverconstrainedError' || /constraint/i.test(msg)) {
+    return 'Camera does not support the requested settings. Try again with default settings.';
   }
-  return msg || 'Could not start media.';
+  if (name === 'NotSupportedError' || /not supported/i.test(msg)) {
+    return 'Camera/microphone access is not supported in this browser.';
+  }
+  if (name === 'AbortError' || /aborted/i.test(msg)) {
+    return 'Microphone/camera access was interrupted. Please try again.';
+  }
+  // Fallback: use the raw message (truncated).
+  return msg ? msg.split('\n')[0].slice(0, 200) : 'Could not start media.';
 }
 
 function releaseMedia(stream) {
@@ -293,14 +495,14 @@ function buildPeerConnection() {
     if (!activeCall) return;
     const cs = pc.connectionState;
     if (cs === 'connected') {
-      activeCall.state = 'connected';
+      setCallState(activeCall, 'connected');
       activeCall.connectedAt = activeCall.connectedAt || Date.now();
       emit({ type: 'state', call: activeCall });
     } else if (cs === 'failed') {
       // ICE failure — attempt ICE restart once before giving up.
       tryIceRestart(pc);
     } else if (cs === 'disconnected') {
-      activeCall.state = 'reconnecting';
+      setCallState(activeCall, 'reconnecting');
       emit({ type: 'state', call: activeCall });
       // If we don't recover in 10s, declare failed.
       setTimeout(() => {
@@ -329,22 +531,19 @@ function tryIceRestart(pc) {
         sendSignal({ type: 'offer', payload: pc.localDescription });
       }
     }).catch(() => {});
-    // Give the restart ~12s, then declare failed.
     setTimeout(() => {
       if (activeCall && activeCall.peer === pc && pc.connectionState !== 'connected') {
-        activeCall.state = 'failed';
-        emit({ type: 'state', call: activeCall });
+        if (setCallState(activeCall, 'failed')) emit({ type: 'state', call: activeCall });
         toast('Call connection failed', 'error');
-        hangup('failed');
+        hangup('failed').catch(() => {});
       }
-      activeCall._iceRestartInFlight = false;
+      if (activeCall) activeCall._iceRestartInFlight = false;
     }, 12_000);
   } catch (e) {
-    activeCall._iceRestartInFlight = false;
-    activeCall.state = 'failed';
-    emit({ type: 'state', call: activeCall });
+    if (activeCall) activeCall._iceRestartInFlight = false;
+    if (setCallState(activeCall, 'failed')) emit({ type: 'state', call: activeCall });
     toast('Call connection failed', 'error');
-    hangup('failed');
+    hangup('failed').catch(() => {});
   }
 }
 
@@ -362,10 +561,34 @@ function setupSignaling() {
         console.warn('[chc] dropped signal from non-participant', payload.from);
         return;
       }
+      // Race-safe: if we're still in incoming_ringing/accepting (not yet
+      // accepting → connecting), queue the signaling so we can process it
+      // after media is acquired. This handles the "offer arrives before
+      // Accept click" race (spec §28).
+      const cur = activeCall;
+      if (cur && cur.role === 'callee' &&
+          (cur.state === 'incoming_ringing' || cur.state === 'accepting')) {
+        let q = _pendingSignalingByCallId.get(cur.callId);
+        if (!q) { q = []; _pendingSignalingByCallId.set(cur.callId, q); }
+        q.push(payload);
+        console.info('[chc] queued signaling during pre-accept state');
+        return;
+      }
       try { await onSignal(payload); }
       catch (e) { console.error('[chc] signal handler error', e); }
     })
     .subscribe();
+}
+
+// Drain queued signaling messages that arrived before accept completed.
+async function drainPendingSignaling(callId) {
+  const q = _pendingSignalingByCallId.get(callId);
+  if (!q || !q.length) return;
+  _pendingSignalingByCallId.delete(callId);
+  for (const payload of q) {
+    try { await onSignal(payload); }
+    catch (e) { console.error('[chc] drainPendingSignaling error', e); }
+  }
 }
 
 async function onSignal(msg) {
@@ -374,16 +597,15 @@ async function onSignal(msg) {
     if (msg.type === 'answer') {
       if (!activeCall.peer) activeCall.peer = buildPeerConnection();
       if (activeCall.localStream) {
-        // Idempotent — only add tracks we don't already have on the sender.
         const existing = activeCall.peer.getSenders().map(s => s.track && s.track.kind);
         for (const track of activeCall.localStream.getTracks()) {
           if (!existing.includes(track.kind)) activeCall.peer.addTrack(track, activeCall.localStream);
         }
       }
       await activeCall.peer.setRemoteDescription(new RTCSessionDescription(msg.payload));
-      activeCall.state = 'connected';
+      setCallState(activeCall, 'connected');
       activeCall.connectedAt = activeCall.connectedAt || Date.now();
-      clearTimeout(_callerTimeoutTimer);
+      cancelCallerTimeout(activeCall.callId);
       emit({ type: 'state', call: activeCall });
     } else if (msg.type === 'offer') {
       if (!activeCall.peer) activeCall.peer = buildPeerConnection();
@@ -420,24 +642,39 @@ function sendSignal(msg) {
 }
 
 // Caller starts the WebRTC negotiation after seeing 'accepted' state
-// (via realtime subscription on calls table — handled by views/call.js).
+// (via realtime subscription on calls table — handled by call-manager.js).
 export async function startNegotiation() {
   if (!activeCall || activeCall.role !== 'caller') return;
+  if (isTerminal(activeCall.state)) return;
   if (!activeCall.peer) activeCall.peer = buildPeerConnection();
   if (!activeCall.localStream) {
-    activeCall.localStream = await acquireMedia(activeCall.kind);
+    try {
+      activeCall.localStream = await acquireMedia(activeCall.kind);
+    } catch (e) {
+      console.warn('[chc-call] caller getUserMedia failed', e);
+      activeCall._permissionError = friendlyMediaError(e, activeCall.kind);
+      if (setCallState(activeCall, 'failed')) emit({ type: 'state', call: activeCall });
+      toast(`Cannot start media: ${activeCall._permissionError}`, 'error');
+      return;
+    }
     emit({ type: 'local-stream', call: activeCall });
   }
-  // Idempotent track add — don't double-add the same track kind.
+  // Idempotent track add.
   const existing = activeCall.peer.getSenders().map(s => s.track && s.track.kind);
   for (const track of activeCall.localStream.getTracks()) {
     if (!existing.includes(track.kind)) activeCall.peer.addTrack(track, activeCall.localStream);
   }
-  const offer = await activeCall.peer.createOffer();
-  await activeCall.peer.setLocalDescription(offer);
-  sendSignal({ type: 'offer', payload: offer });
-  activeCall.state = 'connecting';
-  emit({ type: 'state', call: activeCall });
+  try {
+    const offer = await activeCall.peer.createOffer();
+    await activeCall.peer.setLocalDescription(offer);
+    sendSignal({ type: 'offer', payload: offer });
+    setCallState(activeCall, 'connecting');
+    emit({ type: 'state', call: activeCall });
+  } catch (e) {
+    console.error('[chc-call] startNegotiation failed', e);
+    if (setCallState(activeCall, 'failed')) emit({ type: 'state', call: activeCall });
+    toast(`Negotiation failed: ${e.message || e}`, 'error');
+  }
 }
 
 // Direct wrapper for call_self_recover (server RPC). Pass the call_id
@@ -479,26 +716,34 @@ export function isCamOn() {
 
 // ---- teardown ----
 function teardown(reason) {
+  // Only run if we actually have a call (avoid spurious cleanup).
+  if (!activeCall) return;
+  const prev = activeCall;
+  if (!isTerminal(prev.state)) {
+    // Reuse the requested reason as the state if it's a terminal state,
+    // otherwise fall back to 'ended'.
+    const terminal = TERMINAL_STATES.has(reason) ? reason : 'ended';
+    setCallState(prev, terminal);
+  }
+  cancelCallerTimeout(prev.callId);
+  // Drop any queued signaling for this call.
+  _pendingSignalingByCallId.delete(prev.callId);
   // Best-effort 'bye' broadcast so the other side can drop their channel.
-  if (signalingChannel && activeCall) {
+  if (signalingChannel) {
     try { signalingChannel.send({
       type: 'broadcast', event: 'signal',
-      payload: { type: 'bye', from: getUserId(), call_id: activeCall.callId, reason }
+      payload: { type: 'bye', from: getUserId(), call_id: prev.callId, reason }
     }); } catch {}
   }
   if (signalingChannel) { try { sb.removeChannel(signalingChannel); } catch {} signalingChannel = null; }
-  if (activeCall) {
-    releaseMedia(activeCall.localStream);
-    // release remote tracks too (belt-and-braces — they should be GC'd anyway)
-    if (activeCall.remoteStream) {
-      for (const t of activeCall.remoteStream.getTracks()) { try { t.stop(); } catch {} }
-    }
-    if (activeCall.peer) { try { activeCall.peer.close(); } catch {} }
-    const final = Object.assign({}, activeCall, { state: reason });
-    activeCall = null;
-    emit({ type: 'ended', call: final, reason });
+  releaseMedia(prev.localStream);
+  if (prev.remoteStream) {
+    for (const t of prev.remoteStream.getTracks()) { try { t.stop(); } catch {} }
   }
-  clearTimeout(_callerTimeoutTimer);
+  if (prev.peer) { try { prev.peer.close(); } catch {} }
+  const final = Object.assign({}, prev, { state: reason });
+  activeCall = null;
+  emit({ type: 'ended', call: final, reason });
 }
 
 // ---- minimize / restore (floating bubble) ----
