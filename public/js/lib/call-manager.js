@@ -57,9 +57,54 @@ let _incomingExpiryTimer = null;// auto-dismiss after 60s
 // Constants
 const INCOMING_TIMEOUT_MS = 60_000;  // matches DB call_miss_sweep
 
+// ----- debug overlay (development-time diagnostics) -----
+// Toggle with `window.__CHC_CALL_DEBUG__ = true` (default true). Shows a small
+// fixed overlay in the bottom-left with realtime state — channel name, auth
+// uid, SUBSCRIBED/CLOSED status, last event, last error. Hidden in production
+// builds when window.__CHC_HIDE_DEBUG__ is set.
+const _debug = { lastChannel: null, lastStatus: null, lastEvent: null, lastError: null };
+
+function isDebug() {
+  try {
+    if (typeof window === 'undefined') return false;
+    if (window.__CHC_HIDE_DEBUG__) return false;
+    if (window.__CHC_CALL_DEBUG__ === false) return false;
+    return true; // default on
+  } catch { return false; }
+}
+
+function ensureDebugOverlay() {
+  if (!isDebug()) return;
+  if (document.getElementById('chc-call-debug')) return;
+  const o = el('div',
+    { id: 'chc-call-debug',
+      style: 'position:fixed;left:8px;bottom:8px;z-index:2147483646;background:rgba(0,0,0,.78);color:#9be7ff;font:11px/1.35 monospace;padding:8px 10px;border-radius:6px;max-width:340px;pointer-events:none;white-space:pre-wrap;word-break:break-word' },
+    '[CALL RT] booting…');
+  document.body.appendChild(o);
+}
+
+function setDebugLine(label, value) {
+  if (!isDebug()) return;
+  ensureDebugOverlay();
+  const o = document.getElementById('chc-call-debug');
+  if (!o) return;
+  o.textContent =
+    `[CALL RT]\n` +
+    `${label}\n` +
+    `uid: ${state.profile?.id || '(none)'}\n` +
+    `channel: ${_debug.lastChannel || '-'}\n` +
+    `status: ${_debug.lastStatus || '-'}\n` +
+    `last event: ${_debug.lastEvent || '-'}\n` +
+    `last error: ${_debug.lastError || '-'}\n` +
+    `mounted: ${mounted}\n` +
+    `incoming: ${_incomingCall ? _incomingCall.id.slice(0,8) + ' from ' + (_incomingCall.callerId||'?').slice(0,8) : '-'}\n` +
+    `active: ${getActive() ? getActive().callId.slice(0,8) + ' role=' + getActive().role + ' state=' + getActive().state : '-'}`;
+}
+
 // ----- public API -----
 export function isMounted() { return mounted; }
 export function getIncoming() { return _incomingCall; }
+export function getDebugSnapshot() { return { ..._debug, mounted, uid: state.profile?.id || null }; }
 
 // Idempotent helper for callers that want to ensure the manager is up
 // without knowing whether enterApp() has already done it. Safe to call many
@@ -84,6 +129,8 @@ export function mountCallManager() {
 
   mounted = true;
   console.info('[chc-call-manager] mounting for uid', uid);
+  _debug.lastChannel = `call-incoming-global (filter: callee_id=eq.${uid})`;
+  setDebugLine('mounting');
 
   // 1. Subscribe to lib/call.js events (incoming / state / ended / rehydrate).
   _callUnsub = callSub(handleCallEvent);
@@ -104,14 +151,39 @@ export function mountCallManager() {
   _pgChannel = sb.channel('call-incoming-global')
     .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'calls', filter: `callee_id=eq.${uid}` },
-        onCallsInsert)
+        (payload) => {
+          console.info('[chc-call-manager] postgres_changes INSERT', payload?.new);
+          _debug.lastEvent = `INSERT call=${payload?.new?.id?.slice(0,8)} caller=${payload?.new?.caller_id?.slice(0,8)} state=${payload?.new?.state}`;
+          setDebugLine('event: INSERT');
+          onCallsInsert(payload);
+        })
     .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'calls' },
-        onCallsUpdate)
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') console.info('[chc-call-manager] SUBSCRIBED');
-      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        console.warn('[chc-call-manager] channel status', status);
+        (payload) => {
+          const c = payload?.new;
+          console.info('[chc-call-manager] postgres_changes UPDATE', c?.id, c?.state);
+          _debug.lastEvent = `UPDATE call=${c?.id?.slice(0,8)} state=${c?.state}`;
+          setDebugLine('event: UPDATE');
+          onCallsUpdate(payload);
+        })
+    .subscribe((status, err) => {
+      _debug.lastStatus = status;
+      if (err) _debug.lastError = String(err);
+      console.info('[chc-call-manager] channel status:', status, err || '');
+      if (status === 'SUBSCRIBED') {
+        setDebugLine('SUBSCRIBED ✓');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setDebugLine('SUBSCRIPTION FAILED');
+        // Attempt one re-subscribe after a delay (recovery without infinite loop).
+        // The channel itself is reusable in supabase-js; calling .subscribe() again
+        // reconnects. We throttle to one retry every 5s.
+        if (!_reconnectInFlight) {
+          _reconnectInFlight = true;
+          setTimeout(() => {
+            _reconnectInFlight = false;
+            try { _pgChannel && _pgChannel.subscribe(); } catch {}
+          }, 5000);
+        }
       }
     });
 
@@ -122,6 +194,8 @@ export function mountCallManager() {
   renderIncoming();
   renderActive();
 }
+
+let _reconnectInFlight = false;
 
 // Subscribe to the global state pubsub exactly once. The returned handle
 // overwrites any prior _stateUnsub so we never accumulate listeners.
@@ -192,6 +266,8 @@ function onCallsUpdate(payload) {
 
 // ----- lib/call.js event bridge -----
 function handleCallEvent(ev) {
+  console.info('[chc-call-manager] call-bus event', ev.type, ev.call ? ('call=' + (ev.call.callId||'?').slice(0,8)) : '');
+  _debug.lastEvent = `bus:${ev.type}${ev.call ? ' call='+(ev.call.callId||'?').slice(0,8) : ''}`;
   if (ev.type === 'incoming') {
     _incomingCall = {
       id: ev.call.callId,
@@ -226,6 +302,7 @@ function handleCallEvent(ev) {
     renderIncoming();
     renderActive();
   }
+  setDebugLine('event-bus: ' + ev.type);
 }
 
 // ----- incoming modal (floating) -----
