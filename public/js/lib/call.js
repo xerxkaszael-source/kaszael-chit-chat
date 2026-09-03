@@ -453,9 +453,9 @@ function friendlyMediaError(e, kind) {
   }
   if (name === 'NotAllowedError' || /denied|permission/i.test(msg)) {
     if (kind === 'video') {
-      return 'Camera/microphone permission denied. Please allow camera AND microphone access for Kaszael Chit&Chat in your browser\u2019s site settings, then try again.';
+      return 'Camera/microphone permission denied. Please allow camera AND microphone access for Kaszael Ngobrol in your browser\u2019s site settings, then try again.';
     }
-    return 'Microphone permission denied. Please allow microphone access for Kaszael Chit&Chat in your browser\u2019s site settings, then try again.';
+    return 'Microphone permission denied. Please allow microphone access for Kaszael Ngobrol in your browser\u2019s site settings, then try again.';
   }
   if (name === 'NotFoundError' || /NotFound|not found/i.test(msg)) {
     if (kind === 'video') return 'No microphone or camera was detected on this device.';
