@@ -8,3 +8,6 @@ node_modules/
 *.*.bak.*
 *.*.*.bak.*
 .DS_Store
+# Netlify runtime state (not source)
+.netlify/
+.last-deploy-id

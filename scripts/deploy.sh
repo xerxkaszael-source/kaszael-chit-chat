@@ -39,11 +39,20 @@ EOF
 
 echo "[deploy] config.js injected: $(grep -o 'anonKey:."[^"]\{12\}' "$BUILD/js/config.js")...(${#ANON} chars)"
 
-# 3. Zip
+# 3. Zip (Termux has no zip; use Python)
 rm -f "$ZIP"
-cd "$BUILD"
-zip -qr "$ZIP" .
-cd - > /dev/null
+python3 - <<PYEOF
+import zipfile, os
+src = "$BUILD"
+out = "$ZIP"
+with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(src):
+        for f in files:
+            fp = os.path.join(root, f)
+            arc = os.path.relpath(fp, src)
+            zf.write(fp, arc)
+print(f"[deploy] zipped {os.path.getsize(out)} bytes")
+PYEOF
 echo "[deploy] zipped $(du -h "$ZIP" | cut -f1)"
 
 # 4. Netlify: list existing site
