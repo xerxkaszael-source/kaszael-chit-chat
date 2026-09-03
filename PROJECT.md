@@ -84,6 +84,29 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
   are ready; will trigger Netlify drop once key is provided.
 
 
+
+### 2026-09-03 — PHASE 4 DEPLOYED + LIVE-VERIFIED (commits 95f90ca, 6a98e7a2)
+
+**LIVE @ https://kaszael-chat.netlify.app** — anon key restored (208 chars),
+migration 018 applied (16/16 statements), 6 RPC smoke tests pass.
+
+- anonKey: full 208-char JWT for `himrvevlnbpubwmsdhya` (no longer truncated)
+- migration 018: 6-state presence enum, last_activity_at, 3 new RPCs,
+  notifications RLS, 12-kind check
+- Live assets: 26 JS files, 341KB total
+- Auth-gated RPCs correctly return `CHC:unauthorized` for anon:
+  presence_set_status, presence_heartbeat, notifications_list, profile_own
+- Public-by-design RPCs return safe defaults for anon: presence_sweep_away,
+  presence_get_for, presence_list, notifications_unread_count
+- Direct REST reads blocked by RLS on direct_messages / message_reads /
+  notifications (0 rows visible to anon)
+- Realtime publication includes notifications + presence tables
+
+Deploy mechanism: `scripts/deploy.sh` reads `~/.hermes/.env` for
+SUPABASE_ANON_KEY + NETLIFY_AUTH_TOKEN, injects anon key into config.js,
+zips public/, drops to Netlify site `kaszael-chat` via API.
+
+
 ### 2026-09-03 — broadcast delete / role apply / purge / user delete / [object HTMLSpanElement] (FIX-20260903-08)
 **Three independent root causes were silently breaking all four reported bugs at once.**
 
