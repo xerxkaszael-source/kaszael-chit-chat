@@ -36,6 +36,53 @@ See TASKS.md. Live state in mission file logs/missions/MISSION-20260902-002-kasz
 ## Bug fixes log
 
 
+### 2026-09-03 — PHASE 4: REALTIME HARDENING + PRESENCE + NOTIFICATION CENTER (commits 08d471a, f1f5325, 9d66589)
+
+**Next-Gen Phase 4 — three incremental commits on `next-gen` branch (3 ahead of `main`).**
+
+- **Phase 4a — DM realtime hardening (`08d471a`)**
+  - Fix sender-hydrate hack in dm.js INSERT handler — new messages now resolve
+    the sender profile via `ensureProfile()` instead of rendering `?` placeholders.
+  - Per-conversation typing broadcast channel `typing-dm:<convId>` — typing events
+    no longer leak across conversations.
+  - Reactions realtime via postgres_changes on `message_reactions_dm` (RLS-gated).
+  - Read-receipts realtime via postgres_changes on `message_reads`; flips
+    `m.read_by_other=true` → bubble shows ✓✓ instead of ✓.
+  - Debounced batch read-mark (1.5s flush, multi-tab dedup via localStorage).
+  - Failed-message state styling (red border + opacity).
+  - All styles use theme tokens (--bg-*, --text-*, --accent, --danger).
+- **Phase 4b — Centralized read-receipts flusher (`f1f5325`)**
+  - New `lib/read-receipts.js` with `queueReadMark(convId, msgId)` — single
+    source of truth for the read-mark queue, shared across views.
+  - Multi-tab reconcile via `storage` event listener on `chc:dm:read:<convId>`.
+  - Optimistic local inbox decrement on successful RPC (zeroes conv's
+    `unread_count` and recomputes `state.dmUnreadTotal`).
+  - Requeue + retry on RPC failure (no silent data loss).
+- **Phase 4c — Presence hardening + Notification Center (`9d66589`)**
+  - Migration 018 extends `presence.state` from 3-state (online/idle/offline) to
+    full 6-state (online/away/busy/dnd/invisible/offline) per brief §27.
+  - Adds `last_activity_at` column + `presence_sweep_away()` server-side sweep.
+  - Replaces `presence_heartbeat(session_id)` to accept `v_status` + `v_activity`.
+  - New RPCs: `presence_set_status`, `presence_get_for`.
+  - New `lib/presence.js` client-side manager: activity detector (mouse/key/touch),
+    5-min idle timer, visibility handler, localStorage persistence.
+  - `lib/realtime.js` heartbeat carries chosen status; presence track is **skipped
+    entirely when status === 'invisible'** (privacy opt-out).
+  - Notification Center: new RPCs `notifications_list` (paginated, actor-joined),
+    `notifications_mark_read`, `notifications_mark_all_read`.
+  - New `views/notifications.js` with full UI: unread row styling, mark-all-read
+    button, kind-aware icons, deep-link via `payload.link`.
+  - main.js routes `#/notifications` to the new view.
+- **Verification:**
+  - All JS files pass `node --check`
+  - 3 commits pushed to `next-gen` (local == remote hash)
+  - GitHub: `9d66589` is HEAD of `next-gen`, ahead of `main` by 3 commits
+  - Live URL (`kaszael-chat.netlify.app`) **NOT deployed** — anonKey still
+    truncated in `public/js/config.js`; deploy blocked until key restored
+- **Live deploy blocker:** anonKey for `himrvevlnbpubwmsdhya` is not in any
+  workspace-local env, pool, or git history. Migration 018 + frontend changes
+  are ready; will trigger Netlify drop once key is provided.
+
 
 ### 2026-09-03 — broadcast delete / role apply / purge / user delete / [object HTMLSpanElement] (FIX-20260903-08)
 **Three independent root causes were silently breaking all four reported bugs at once.**
