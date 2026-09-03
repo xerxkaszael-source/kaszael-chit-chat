@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This pr
 
 ## [Unreleased]
 
+### Fixed (commit `0346cbb`)
+- **Stuck-on-loading `SyntaxError: Unexpected token ';'. Expected ')'`** — build `c38fbbd` site stuck at "Loading Chit&Chat…" with this JS error. Root cause: commit `bbe3e14` wrapped the 2 DM call buttons (icBtn for voice + video) in a new `el('div', { class: 'dm-call-actions' }, icBtn, icBtn)` wrapper. The wrapper opened **1 new paren** but the closing line `})),` was left with **2 closes** (same as the pre-wrapper code), so the outer `dmViewEl.append(` from line 148 was **never closed**. V8 reported the error at line 181 — but the unclosed `(` was actually from line 148 (V8 reports where it ran out of expected tokens, not where the missing open was). Both `node --check` and strict `vm.SourceTextModule` ESM parsing confirm the bug.
+- **Fix**: 1-char change on line 178 — `})),` → `}))),` (closes: arrow fn + icBtn + dm-call-actions wrapper).
+- **Verification**: 3-way MD5 LOCAL (`461c79b1...`) = LIVE Netlify CDN = GitHub raw. Fixed pattern `}))),` present, buggy pattern `})),` absent. Build marker `0346cbb` live.
+- **Lesson (M14, M15)**: When restructuring children of an `el(..., [...children...])` call into a wrapper, the wrapper's closing paren MUST be added at the correct line. Do a line-by-line paren accounting (after stripping strings/comments) from the OUTERMOST opening — V8's error position is misleading when it points far from the original unclosed paren.
+
+**Files (1):** `public/js/views/dm.js`
+
+---
+
+### Fixed (commit `c38fbbd`)
+- **DM cleanup dynamic-import parser trap** — replaced `await import('../lib/notifications.js')` inside `cleanupDmRealtime()` with a direct call to `refreshDmUnread()` (already imported at top). Dynamic `import()` with relative paths was tripping the browser's ESM parser in some build pipelines. (Turned out a separate, older paren bug at `bbe3e14` was the actual cause of the still-stuck loading screen — see commit `0346cbb`.)
+
+**Files (1):** `public/js/views/dm.js`
+
+---
+
 ### Fixed (commit `bbe3e14`)
 - **Reaction emojis** — reaction picker + already-reacted pills now show real Unicode glyphs (👍 ❤️ 😂 😮 😢 🔥 👏 🎉) instead of the design-time text labels (`+1`, `love`, `haha`, `fire`, `clap`, `party`). DB-stored `:token:` strings unchanged for backward compatibility (resolved via `tokenToGlyph()` lookup; falls back to the raw token for older reactions).
 - **Owner/Moderation tab persistence** — `#/owner/chat`, `#/owner/users`, `#/owner/roles` and `#/moderation/reports`, `#/moderation/states`, `#/moderation/lookup` now survive re-renders, browser back/forward, and direct deep-links. Tab click updates the URL; router passes the sub-tab to `ownerView(main, sub)` / `moderationView(main, sub)`. Sidebar "Owner Center" / "Moderation" buttons still default to the first tab.
