@@ -1,7 +1,7 @@
 // panels.js — right panel + modals: friends, notifications, pins, search, profile, report
 import { rpc, from } from '../lib/db.js';
 import { state, me, myLevel, roleLevel, isMemberPlus } from '../lib/state.js';
-import { el, ic, toast, modal, relTime, fmtTime } from '../lib/util.js';
+import { el, ic, toast, modal, confirmModal, relTime, fmtTime } from '../lib/util.js';
 import { avatar, badge } from '../lib/avatar.js';
 
 function rightPanel(title, bodyEl) {
@@ -189,16 +189,73 @@ export async function openProfile(userId) {
       // Hide user-action buttons when viewing staff (owner/admin).
       // Server-side already rejects (migration 009), but UI shouldn't even show them.
       const isStaff = prof.role === 'owner' || prof.role === 'admin';
-      body.append(el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
-        el('button', { class: 'btn sm primary', onclick: async () => {
-          try { await rpc('friend_request', { target_username: prof.username }); toast('Friend request sent', 'ok'); }
+      // Friend-status aware action row (migration 022 added friend_status to user_public).
+      // 'none'      → Add friend
+      // 'pending_out' → Cancel request
+      // 'pending_in'  → Accept / Decline
+      // 'accepted'    → Message + Unfriend
+      // 'blocked_by_me' / 'blocks_me' → no friend actions
+      const fs = prof.friend_status || 'none';
+      const fId = prof.friendship_id;
+      const actionRow = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
+      // helper that re-renders this profile without closing the panel
+      const rebuild = async () => {
+        const fresh = await rpc('user_public', { target_id: userId });
+        const pres2 = state.presence.get(userId);
+        rp.panel.querySelector('.rp-body').innerHTML = '';
+        const newBody = renderProfileBody(fresh, pres2);
+        rp.panel.querySelector('.rp-body').append(newBody);
+      };
+
+      if (fs === 'none') {
+        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
+          try { await rpc('friend_request', { target_username: prof.username }); toast('Friend request sent', 'ok'); await rebuild(); }
           catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('user-add'), 'Add friend'),
-        isStaff ? null : el('button', { class: 'btn sm ghost', onclick: async () => {
+        } }, ic('user-add'), 'Add friend'));
+      } else if (fs === 'pending_out') {
+        // Cancel pending request I sent — no dedicated RPC; treat as friend_remove while pending.
+        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+          if (!fId) return;
+          try {
+            // No "friend_cancel" RPC; use friend_remove (works on pending too) via direct delete via service is forbidden — instead, surface a hint.
+            await rpc('friend_remove', { other_id: prof.id });
+            toast('Friend request cancelled', 'ok');
+            await rebuild();
+          } catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
+        } }, ic('cross'), 'Cancel request'));
+      } else if (fs === 'pending_in') {
+        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
+          if (!fId) return;
+          try { await rpc('friend_respond', { friendship_id: fId, accept: true }); toast('Friend request accepted', 'ok'); await rebuild(); }
+          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
+        } }, ic('check'), 'Accept'));
+        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+          if (!fId) return;
+          try { await rpc('friend_respond', { friendship_id: fId, accept: false }); toast('Friend request declined', 'ok'); await rebuild(); }
+          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
+        } }, ic('cross'), 'Decline'));
+      } else if (fs === 'accepted') {
+        actionRow.append(el('button', { class: 'btn sm primary', onclick: async () => {
+          rp.close();
+          // openDm is in dm.js — use hash navigation; dm.js auto-opens from route
+          location.hash = '/dm/' + prof.id;
+        } }, ic('envelope'), 'Message'));
+        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
+          if (!await confirmModal({ title: 'Unfriend ' + prof.display_name + '?', text: 'They will be removed from your friends list. You can send a new request later.', confirmLabel: 'Unfriend', danger: true })) return;
+          try { await rpc('friend_remove', { other_id: prof.id }); toast('Unfriended', 'ok'); await rebuild(); }
+          catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
+        } }, ic('user-times'), 'Unfriend'));
+      }
+      // If blocked, no friend actions — Block/Report row below still available.
+
+      if (!isStaff) {
+        actionRow.append(el('button', { class: 'btn sm ghost', onclick: async () => {
           try { await rpc('friend_block', { other_id: prof.id }); toast('Blocked', 'ok'); rp.close(); }
           catch (e) { toast(e.chc?.text || 'Failed', 'error'); }
-        } }, ic('ban'), 'Block'),
-        isStaff ? null : el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report')));
+        } }, ic('ban'), 'Block'));
+        actionRow.append(el('button', { class: 'btn sm ghost', onclick: () => openReportModal({ target_user_id: prof.id }) }, ic('triangle-warning'), 'Report'));
+      }
+      body.append(actionRow);
     }
   } catch (e) { body.append(el('p', { class: 'muted' }, 'Failed to load profile.')); }
 }
