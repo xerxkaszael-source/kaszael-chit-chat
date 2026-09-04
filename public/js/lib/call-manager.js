@@ -379,7 +379,7 @@ function renderIncoming() {
             onclick: () => doDecline() }, ic('phone-slash'), ' Decline'),
         el('button', { class: 'btn primary large',
             onclick: () => doAccept() }, ic('phone-call'),
-          ' ', el('span', { class: 'chc-accept-label' }, acceptLabel))));
+          ' ', el('span', { class: 'chc-accept-label' }, acceptLabel)))));
   document.body.append(modal);
 }
 
