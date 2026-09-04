@@ -502,7 +502,7 @@ function buildActivePanel(a) {
     { class: 'call-ctrl ctrl-minimize', title: minimized ? 'Expand' : 'Minimize',
       'aria-label': minimized ? 'Expand' : 'Minimize',
       onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
-    ic(minimized ? 'arrow-up-right-and-arrow-down-left-from-center' : 'arrow-down-right-and-arrow-up-left-from-center'));
+    ic(minimized ? 'window-maximize' : 'window-minimize'));
 
   // Show a "connecting…" pill during accepting/connecting/ending/declining
   // (Bug C fix: while RPC is in flight, surface a status pill so the user
@@ -534,7 +534,7 @@ function buildActivePanel(a) {
     !minimized ? el('button',
       { class: 'ctrl-minimize', title: 'Minimize', 'aria-label': 'Minimize',
         onclick: (e) => { e.stopPropagation(); toggleMinimize(); } },
-      ic('arrow-down-right-and-arrow-up-left-from-center')) : null,
+      ic('window-minimize')) : null,
     el('button', { class: 'ctrl-hangup', title: 'Hang up', 'aria-label': 'Hang up',
       onclick: (e) => { e.stopPropagation(); hangup(); } },
       ic('phone-slash')));
