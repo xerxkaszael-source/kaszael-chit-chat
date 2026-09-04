@@ -12,6 +12,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Inject short commit SHA into index.html so users can verify which
+      # commit they are running (replaces __BUILD_SHA__ placeholder).
+      - name: Inject build SHA
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          sed -i "s/__BUILD_SHA__/${SHORT_SHA}/g" public/index.html
+          echo "Build marker: $(grep -o 'build [a-z0-9]\{7\}' public/index.html)"
+
       # config.js already ships the public Supabase URL + anon key, so no build
       # step is needed — publish the public/ directory directly.
 

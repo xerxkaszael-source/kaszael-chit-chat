@@ -28,7 +28,7 @@ import { toast } from './util.js';
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' }
+  { urls: 'stun:stun.cloudflare.com:3478' },
   // TURN intentionally omitted — requires auth credentials. Architecture is
   // TURN-ready: pass `iceTransportPolicy: 'relay'` and an array of TURN
   // entries from `window.SUPABASE_CONFIG.iceServers || []` once provisioned.
