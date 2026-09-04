@@ -12,7 +12,7 @@ FRAGMENTS=(
   '200015xerx'                          # owner bootstrap password fragment
   '-----BEGIN [A-Z ]*PRIVATE KEY-----'
 )
-SCAN_DIRS=("$PROJECT_DIR/public" "$PROJECT_DIR/scripts" "$PROJECT_DIR/docs" "$PROJECT_DIR/netlify.toml")
+SCAN_DIRS=("$PROJECT_DIR/public" "$PROJECT_DIR/scripts" "$PROJECT_DIR/docs" "$PROJECT_DIR/vercel.json")
 for d in "${SCAN_DIRS[@]}"; do
   [ -e "$d" ] || continue
   for p in "${FRAGMENTS[@]}"; do

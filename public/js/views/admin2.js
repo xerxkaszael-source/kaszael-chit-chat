@@ -404,5 +404,5 @@ export async function systemView(main) {
 
   // deployment info (no secrets)
   holder.append(el('h3', { style: 'margin:18px 0 8px' }, 'Deployment info'),
-    el('p', { class: 'muted' }, `App version ${window.SUPABASE_CONFIG.version} · frontend on Netlify · API: ${new URL(window.SUPABASE_CONFIG.url).host}`));
+    el('p', { class: 'muted' }, `App version ${window.SUPABASE_CONFIG.version} · frontend on Vercel · API: ${new URL(window.SUPABASE_CONFIG.url).host}`));
 }
