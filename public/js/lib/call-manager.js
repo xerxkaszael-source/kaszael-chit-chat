@@ -54,6 +54,37 @@ let _dragState = null;          // bubble drag tracking
 let _ringtoneTimer = null;      // incoming-call ringtone loop
 let _incomingExpiryTimer = null;// auto-dismiss after 60s
 
+// State-adoption guard for realtime UPDATEs.
+// The DB uses 'accepted' (server-authoritative value written by call_accept
+// RPC) while the JS state machine uses 'connecting'. Without normalization,
+// `a.state` becomes 'accepted' which is NOT a key in ALLOWED transitions and
+// breaks hangup (every transition out of 'accepted' returns false).
+//
+// shouldAdoptState returns true when the incoming realtime state should
+// overwrite the local one. We adopt only when the DB-reported state is
+// at-or-later in the lifecycle (using a numeric tier) — preventing
+// regressions like 'connected' being clobbered back to 'connecting' by a
+// delayed realtime event. Callers MUST pre-normalize DB→JS (e.g. 'accepted'
+// → 'connecting') before invoking this guard.
+const STATE_TIER = {
+  'idle': 0,
+  'outgoing_calling': 1, 'incoming_ringing': 1,
+  'outgoing_ringing': 2, 'accepting': 2,
+  'connecting': 3,        // post-accept (DB: 'accepted' normalizes here)
+  'connected': 4,
+  'reconnecting': 4,
+  'ending': 5, 'declining': 5,
+  'ended': 6, 'failed': 6, 'declined': 6, 'cancelled': 6, 'timeout': 6, 'missed': 6, 'busy': 6,
+};
+function shouldAdoptState(currentLocal, incomingNormalized) {
+  const cur = STATE_TIER[currentLocal];
+  const inc = STATE_TIER[incomingNormalized];
+  if (typeof inc !== 'number') return true;  // unknown → adopt (safe default)
+  if (typeof cur !== 'number') return true;  // unknown → adopt
+  // Same-or-later tier: adopt. Earlier tier: reject (don't regress).
+  return inc >= cur;
+}
+
 // Constants
 const INCOMING_TIMEOUT_MS = 60_000;  // matches DB call_miss_sweep
 
@@ -272,16 +303,28 @@ function onCallsUpdate(payload) {
   const a = getActive();
   // Active call state changed → reflect in UI.
   if (a && a.callId === c.id) {
-    a.state = c.state;
-    renderActive();
-    // Caller side: when callee accepts, kick off WebRTC negotiation.
-    if (c.state === 'accepted' && a.role === 'caller') {
+    // NORMALIZE: DB uses 'accepted' as the post-call_accept server value.
+    // The JS state machine has 'connecting' for this same point in the
+    // lifecycle. If we don't normalize, `a.state` becomes 'accepted' which
+    // is NOT in ALLOWED transitions — every subsequent setCallState call
+    // (e.g. hangup → 'ending') returns false and the call is stuck.
+    // Caller-side: when callee accepts, kick off WebRTC negotiation.
+    const dbState = c.state;
+    const jsState = dbState === 'accepted' ? 'connecting' : dbState;
+    // Only update local state if DB is reporting something we haven't
+    // already moved past (prevents regression: local 'connected' should
+    // not get clobbered back to 'connecting' by a delayed realtime event).
+    if (shouldAdoptState(a.state, jsState)) {
+      a.state = jsState;
+      renderActive();
+    }
+    if (dbState === 'accepted' && a.role === 'caller') {
       import('./call.js').then(({ startNegotiation }) => {
         startNegotiation().catch((e) => toast(`Negotiation failed: ${e.message}`, 'error'));
       });
     }
-    if (['ended','failed','declined','missed','cancelled'].includes(c.state)) {
-      toast(`Call ${c.state}`, 'info', 1500);
+    if (['ended','failed','declined','missed','cancelled'].includes(dbState)) {
+      toast(`Call ${dbState}`, 'info', 1500);
     }
   }
   // Incoming modal: clear if caller cancelled / was declined by someone else.
@@ -507,8 +550,12 @@ function buildActivePanel(a) {
   // Show a "connecting…" pill during accepting/connecting/ending/declining
   // (Bug C fix: while RPC is in flight, surface a status pill so the user
   // sees that teardown is in progress and isn't a hang).
+  // NOTE: We include both 'connecting' (JS) and 'accepted' (DB-normalized
+  // would be 'connecting', but if anything slips past the normalizer, we
+  // still want the pill to appear so the user isn't left in limbo).
   const connPillState = a.state === 'accepting' ? 'Requesting permission…'
     : a.state === 'connecting' ? 'Connecting…'
+    : a.state === 'accepted' ? 'Connecting…'
     : a.state === 'outgoing_calling' ? 'Calling…'
     : a.state === 'outgoing_ringing' ? 'Ringing…'
     : a.state === 'ending' ? 'Disconnecting…'
